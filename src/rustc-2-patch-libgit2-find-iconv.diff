@@ -1,0 +1,17 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 1111111..2222222 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -59,6 +59,12 @@
+ # that we're shipping as well (to ensure that the rustfmt in RLS and the
+ # `rustfmt` executable are the same exact version).
+ rustfmt-nightly = { path = "src/tools/rustfmt" }
++libgit2-sys = { path = '../../tmp-patched-cargo-deps/vendor/libgit2-sys' }
++libssh2-sys = { path = '../../tmp-patched-cargo-deps/vendor/libssh2-sys' }
++openssl-src = { path = '../../tmp-patched-cargo-deps/vendor/openssl-src' }
++openssl-sys = { path = '../../tmp-patched-cargo-deps/vendor/openssl-sys' }
++
++
+ 
+ # See comments in `src/tools/rustc-workspace-hack/README.md` for what's going on
+ # here

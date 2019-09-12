@@ -1,0 +1,14 @@
+This file is part of MXE. See LICENSE.md for licensing information.
+
+Contains ad hoc patches for cross building.
+
+diff --git a/src/librustc_llvm/lib.rs b/src/librustc_llvm/lib.rs
+index 1111111..2222222 100644
+--- a/src/librustc_llvm/lib.rs
++++ b/src/librustc_llvm/lib.rs
+@@ -420,3 +420,5 @@
+         }
+     }
+ }
++
++#[link(name = "ffi")] extern {}
