@@ -1,0 +1,655 @@
+This file is part of MXE. See LICENSE.md for licensing information.
+
+Contains ad hoc patches for cross building.
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Gregorio Litenstein <g.litenstein@gmail.com>
+Date: Fri, 11 Oct 2019 22:18:02 -0300
+Subject: [PATCH 1/4] Check for eLut.h and toFloat.h before making them
+
+
+diff --git a/IlmBase/Half/CMakeLists.txt b/IlmBase/Half/CMakeLists.txt
+index 1111111..2222222 100644
+--- a/IlmBase/Half/CMakeLists.txt
++++ b/IlmBase/Half/CMakeLists.txt
+@@ -1,21 +1,44 @@
+ # SPDX-License-Identifier: BSD-3-Clause
+ # Copyright Contributors to the OpenEXR Project.
+ 
+-add_executable(eLut eLut.cpp)
+-target_compile_features(eLut PUBLIC cxx_std_${OPENEXR_CXX_STANDARD})
++check_include_files(${CMAKE_CURRENT_BINARY_DIR}/eLut.h HAVE_ELUT_H)
++check_include_files(${CMAKE_CURRENT_BINARY_DIR}/toFloat.h HAVE_TOFLOAT_H)
+ 
+-
+-add_executable(toFloat toFloat.cpp)
+-target_compile_features(toFloat PUBLIC cxx_std_${OPENEXR_CXX_STANDARD})
+-
+-add_custom_command(
+-  OUTPUT
+-    ${CMAKE_CURRENT_BINARY_DIR}/toFloat.h
+-    ${CMAKE_CURRENT_BINARY_DIR}/eLut.h
+-  COMMAND $<TARGET_FILE:toFloat> ARGS > ${CMAKE_CURRENT_BINARY_DIR}/toFloat.h
+-  COMMAND $<TARGET_FILE:eLut> ARGS > ${CMAKE_CURRENT_BINARY_DIR}/eLut.h
+-  DEPENDS eLut toFloat
+-)
++if((NOT HAVE_ELUT_H) OR (NOT HAVE_TOFLOAT_H))
++  if(CMAKE_CROSSCOMPILING)
++    message(STATUS "We're cross-compiling; will use native executables from a previous build to generate toFloat.h and eLut.h")
++    set(NATIVE_ILMBASE_BUILD_DIR "NATIVE_ILMBASE-NOTFOUND" CACHE FILEPATH "Point it to the build folder of a native build.")
++    if (NATIVE_ILMBASE_BUILD_DIR)
++      set (toFloat_PATH "${NATIVE_ILMBASE_BUILD_DIR}/bin/toFloat")
++      set (eLut_PATH "${NATIVE_ILMBASE_BUILD_DIR}/bin/eLut")
++    else()
++      message(FATAL_ERROR "Missing path to native build directory.")
++    endif()
++   else()
++    add_executable(eLut eLut.cpp)
++    target_compile_features(eLut PUBLIC cxx_std_${OPENEXR_CXX_STANDARD})
++    set_target_properties(eLut PROPERTIES
++      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
++    )
++    
++    add_executable(toFloat toFloat.cpp)
++    target_compile_features(toFloat PUBLIC cxx_std_${OPENEXR_CXX_STANDARD})
++    set_target_properties(toFloat PROPERTIES
++      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
++    )
++    set (toFloat_PATH "$<TARGET_FILE:toFloat>")
++    set (eLut_PATH "$<TARGET_FILE:eLut>")
++   endif()
++    add_custom_command(
++      OUTPUT
++        ${CMAKE_CURRENT_BINARY_DIR}/toFloat.h
++        ${CMAKE_CURRENT_BINARY_DIR}/eLut.h
++      COMMAND "${toFloat_PATH}" ARGS > "${CMAKE_CURRENT_BINARY_DIR}/toFloat.h"
++      COMMAND "${eLut_PATH}" ARGS > "${CMAKE_CURRENT_BINARY_DIR}/eLut.h"
++      DEPENDS $<$<NOT:$<BOOL:${CMAKE_CROSSCOMPILING}>>:eLut>
++      DEPENDS $<$<NOT:$<BOOL:${CMAKE_CROSSCOMPILING}>>:toFloat>
++    )
++endif()
+ 
+ ### Now define the real library
+ 
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Gregorio Litenstein <g.litenstein@gmail.com>
+Date: Fri, 11 Oct 2019 22:18:40 -0300
+Subject: [PATCH 2/4] Support for MinGW-W64 with pthreads
+
+
+diff --git a/IlmBase/IlmThread/CMakeLists.txt b/IlmBase/IlmThread/CMakeLists.txt
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/CMakeLists.txt
++++ b/IlmBase/IlmThread/CMakeLists.txt
+@@ -21,6 +21,7 @@ ilmbase_define_library(IlmThread
+     IlmThreadPool.h
+     IlmThread.h
+     IlmThreadSemaphore.h
++    IlmThreadMinGWThread.h
+     IlmThreadMutex.h
+     IlmThreadNamespace.h
+     IlmThreadExport.h
+diff --git a/IlmBase/IlmThread/IlmThread.h b/IlmBase/IlmThread/IlmThread.h
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThread.h
++++ b/IlmBase/IlmThread/IlmThread.h
+@@ -94,8 +94,12 @@
+ #include "IlmThreadExport.h"
+ #include "IlmThreadNamespace.h"
+ 
++#if (defined(_WIN32) || defined(_WIN64))
++#include <IlmThreadMinGWThread.h>
++#endif
++
+ #ifdef ILMBASE_FORCE_CXX03
+-#   if defined _WIN32 || defined _WIN64
++#   if ((defined _WIN32 || defined _WIN64) && !defined(HAVE_PTHREAD))
+ #       ifdef NOMINMAX
+ #          undef NOMINMAX
+ #       endif
+@@ -132,7 +136,7 @@ class Thread
+   private:
+ 
+ #ifdef ILMBASE_FORCE_CXX03
+-#   if defined _WIN32 || defined _WIN64
++#   if ((defined _WIN32 || defined _WIN64) && !defined(HAVE_PTHREAD))
+ 	HANDLE _thread;
+ #   elif HAVE_PTHREAD
+ 	pthread_t _thread;
+diff --git a/IlmBase/IlmThread/IlmThreadMinGWThread.h b/IlmBase/IlmThread/IlmThreadMinGWThread.h
+new file mode 100644
+index 0000000..fa158e4
+--- /dev/null
++++ b/IlmBase/IlmThread/IlmThreadMinGWThread.h
+@@ -0,0 +1,63 @@
++///////////////////////////////////////////////////////////////////////////
++//
++// Copyright (c) 2005-2012, Industrial Light & Magic, a division of Lucas
++// Digital Ltd. LLC
++// 
++// All rights reserved.
++// 
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are
++// met:
++// *       Redistributions of source code must retain the above copyright
++// notice, this list of conditions and the following disclaimer.
++// *       Redistributions in binary form must reproduce the above
++// copyright notice, this list of conditions and the following disclaimer
++// in the documentation and/or other materials provided with the
++// distribution.
++// *       Neither the name of Industrial Light & Magic nor the names of
++// its contributors may be used to endorse or promote products derived
++// from this software without specific prior written permission. 
++// 
++// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++///////////////////////////////////////////////////////////////////////////
++
++#ifndef INCLUDED_ILM_THREAD_MINGW_THREAD_H
++#define INCLUDED_ILM_THREAD_MINGW_THREAD_H
++
++//-----------------------------------------------------------------------------
++//
++//  This file is just some boilerplate to ensure macros are correctly defined
++//  in order to compile against MinGW-W64's implementation of posix threads
++//  and semaphores.
++//
++//-----------------------------------------------------------------------------
++
++#if defined(_WIN32) || defined(_WIN64)
++# ifdef NOMINMAX
++#   undef NOMINMAX
++# endif
++# define NOMINMAX
++# include <windows.h>
++# if defined(__MINGW64_VERSION_MAJOR)
++#   include <pthread_unistd.h>
++#   if (defined(_POSIX_SEMAPHORES) && !defined(HAVE_POSIX_SEMAPHORES))
++#     define HAVE_POSIX_SEMAPHORES
++#   endif
++#   if (defined(_POSIX_THREADS) && !defined(HAVE_PTHREAD))
++#     define HAVE_PTHREAD
++#   endif
++# endif
++#endif
++
++#endif // INCLUDED_ILM_THREAD_MINGW_THREAD_H
+\ No newline at end of file
+diff --git a/IlmBase/IlmThread/IlmThreadMutex.cpp b/IlmBase/IlmThread/IlmThreadMutex.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadMutex.cpp
++++ b/IlmBase/IlmThread/IlmThreadMutex.cpp
+@@ -42,7 +42,7 @@
+ #include "IlmBaseConfig.h"
+ 
+ #ifdef ILMBASE_FORCE_CXX03
+-#   if !defined (_WIN32) && !(_WIN64) && !(HAVE_PTHREAD)
++#   if !defined(_WIN32) && !defined(_WIN64) && !(HAVE_PTHREAD)
+ #      include "IlmThreadMutex.h"
+ 
+ ILMTHREAD_INTERNAL_NAMESPACE_SOURCE_ENTER
+diff --git a/IlmBase/IlmThread/IlmThreadMutex.h b/IlmBase/IlmThread/IlmThreadMutex.h
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadMutex.h
++++ b/IlmBase/IlmThread/IlmThreadMutex.h
+@@ -70,8 +70,12 @@
+ #include "IlmBaseConfig.h"
+ #include "IlmThreadNamespace.h"
+ 
++#if (defined(_WIN32) || defined(_WIN64))
++#include <IlmThreadMinGWThread.h>
++#endif
++
+ #ifdef ILMBASE_FORCE_CXX03
+-#   if defined _WIN32 || defined _WIN64
++#   if (defined _WIN32 || defined _WIN64)
+ #      ifdef NOMINMAX
+ #         undef NOMINMAX
+ #      endif
+@@ -116,7 +120,7 @@ class ILMTHREAD_EXPORT Mutex
+     void	lock () const;
+     void	unlock () const;
+ 
+-    #if defined _WIN32 || defined _WIN64
++    #if (defined _WIN32 || defined _WIN64)
+ 	mutable CRITICAL_SECTION _mutex;
+     #elif HAVE_PTHREAD
+ 	mutable pthread_mutex_t _mutex;
+diff --git a/IlmBase/IlmThread/IlmThreadMutexPosix.cpp b/IlmBase/IlmThread/IlmThreadMutexPosix.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadMutexPosix.cpp
++++ b/IlmBase/IlmThread/IlmThreadMutexPosix.cpp
+@@ -41,6 +41,10 @@
+ 
+ #include "IlmBaseConfig.h"
+ 
++#if (defined(_WIN32) || defined(_WIN64))
++#include <IlmThreadMinGWThread.h>
++#endif
++
+ #ifdef ILMBASE_FORCE_CXX03
+ #   if HAVE_PTHREAD
+ 
+diff --git a/IlmBase/IlmThread/IlmThreadMutexWin32.cpp b/IlmBase/IlmThread/IlmThreadMutexWin32.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadMutexWin32.cpp
++++ b/IlmBase/IlmThread/IlmThreadMutexWin32.cpp
+@@ -40,9 +40,12 @@
+ 
+ #include "IlmBaseConfig.h"
+ 
+-#ifdef ILMBASE_FORCE_CXX03
+-#    ifdef _WIN32
++#if (defined(_WIN32) || defined(_WIN64))
++#include <IlmThreadMinGWThread.h>
++#endif
+ 
++#ifdef ILMBASE_FORCE_CXX03
++#    if ((defined _WIN32 || defined _WIN64) && !defined(__MINGW64_VERSION_MAJOR))
+ #        include "IlmThreadMutex.h"
+ #        include "Iex.h"
+ 
+diff --git a/IlmBase/IlmThread/IlmThreadPosix.cpp b/IlmBase/IlmThread/IlmThreadPosix.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadPosix.cpp
++++ b/IlmBase/IlmThread/IlmThreadPosix.cpp
+@@ -41,6 +41,10 @@
+ 
+ #include "IlmBaseConfig.h"
+ 
++#if (defined(_WIN32) || defined(_WIN64))
++#include <IlmThreadMinGWThread.h>
++#endif
++
+ #if HAVE_PTHREAD
+ #ifdef ILMBASE_FORCE_CXX03
+ 
+diff --git a/IlmBase/IlmThread/IlmThreadSemaphore.cpp b/IlmBase/IlmThread/IlmThreadSemaphore.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadSemaphore.cpp
++++ b/IlmBase/IlmThread/IlmThreadSemaphore.cpp
+@@ -41,6 +41,10 @@
+ 
+ #include "IlmBaseConfig.h"
+ 
++#if (defined(_WIN32) || defined(_WIN64))
++#include <IlmThreadMinGWThread.h>
++#endif
++
+ #if !defined (_WIN32) && !(_WIN64) && !(HAVE_PTHREAD)
+ #include "IlmThreadSemaphore.h"
+ 
+diff --git a/IlmBase/IlmThread/IlmThreadSemaphore.h b/IlmBase/IlmThread/IlmThreadSemaphore.h
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadSemaphore.h
++++ b/IlmBase/IlmThread/IlmThreadSemaphore.h
+@@ -37,8 +37,8 @@
+ 
+ //-----------------------------------------------------------------------------
+ //
+-//	class Semaphore -- a wrapper class for
+-//	system-dependent counting semaphores
++//  class Semaphore -- a wrapper class for
++//  system-dependent counting semaphores
+ //
+ //-----------------------------------------------------------------------------
+ 
+@@ -46,24 +46,24 @@
+ #include "IlmThreadExport.h"
+ #include "IlmThreadNamespace.h"
+ 
+-#if defined _WIN32 || defined _WIN64
+-#   ifdef NOMINMAX
+-#      undef NOMINMAX
+-#   endif
+-#   define NOMINMAX
+-#   include <windows.h>
+-#elif defined(HAVE_POSIX_SEMAPHORES)
+-#   include <semaphore.h>
+-#elif defined(__APPLE__)
+-#   include <dispatch/dispatch.h>
+-#else
+-#   ifdef ILMBASE_FORCE_CXX03
+-#      if HAVE_PTHREAD
+-#         include <pthread.h>
+-#      endif
++#if (defined(_WIN32) || defined(_WIN64))
++#include <IlmThreadMinGWThread.h>
++#endif
++
++#if (!(defined(_WIN32) || defined(_WIN64)) || defined(__MINGW64_VERSION_MAJOR))
++#   if defined(HAVE_POSIX_SEMAPHORES)
++#       include <semaphore.h>
++#   elif defined(__APPLE__)
++#       include <dispatch/dispatch.h>
+ #   else
+-#      include <mutex>
+-#      include <condition_variable>
++#       ifdef ILMBASE_FORCE_CXX03
++#           if HAVE_PTHREAD
++#               include <pthread.h>
++#           endif
++#       else
++#           include <mutex>
++#           include <condition_variable>
++#       endif
+ #   endif
+ #endif
+ 
+@@ -77,38 +77,38 @@ class ILMTHREAD_EXPORT Semaphore
+     Semaphore (unsigned int value = 0);
+     virtual ~Semaphore();
+ 
+-    void	wait();
+-    bool	tryWait();
+-    void	post();
+-    int		value() const;
++    void    wait();
++    bool    tryWait();
++    void    post();
++    int     value() const;
+ 
+   private:
+ 
+-#if defined _WIN32 || defined _WIN64
++#if ((defined _WIN32 || defined _WIN64) && !defined(HAVE_POSIX_SEMAPHORES))
+ 
+-	mutable HANDLE _semaphore;
++    mutable HANDLE _semaphore;
+ 
+ #elif defined(HAVE_POSIX_SEMAPHORES)
+ 
+-	mutable sem_t _semaphore;
++    mutable sem_t _semaphore;
+ 
+ #elif defined(__APPLE__)
+-	mutable dispatch_semaphore_t _semaphore;
++    mutable dispatch_semaphore_t _semaphore;
+ 
+ #else
+-	//
+-	// If the platform has Posix threads but no semapohores,
+-	// then we implement them ourselves using condition variables
+-	//
+-
+-	struct sema_t
+-	{
+-	    unsigned int count;
+-	    unsigned long numWaiting;
++    //
++    // If the platform has Posix threads but no semapohores,
++    // then we implement them ourselves using condition variables
++    //
++
++    struct sema_t
++    {
++        unsigned int count;
++        unsigned long numWaiting;
+ #   if ILMBASE_FORCE_CXX03
+ #      if HAVE_PTHREAD
+-	    pthread_mutex_t mutex;
+-	    pthread_cond_t nonZero;
++        pthread_mutex_t mutex;
++        pthread_cond_t nonZero;
+ #      else
+ #         error unhandled legacy setup
+ #      endif
+@@ -116,14 +116,14 @@ class ILMTHREAD_EXPORT Semaphore
+         std::mutex mutex;
+         std::condition_variable nonZero;
+ #   endif
+-	};
++    };
+ 
+-	mutable sema_t _semaphore;
++    mutable sema_t _semaphore;
+   
+ #endif
+ 
+-    void operator = (const Semaphore& s);	// not implemented
+-    Semaphore (const Semaphore& s);		// not implemented
++    void operator = (const Semaphore& s);   // not implemented
++    Semaphore (const Semaphore& s);     // not implemented
+ };
+ 
+ 
+diff --git a/IlmBase/IlmThread/IlmThreadSemaphorePosix.cpp b/IlmBase/IlmThread/IlmThreadSemaphorePosix.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadSemaphorePosix.cpp
++++ b/IlmBase/IlmThread/IlmThreadSemaphorePosix.cpp
+@@ -41,6 +41,10 @@
+ 
+ #include "IlmBaseConfig.h"
+ 
++#if (defined(_WIN32) || defined(_WIN64))
++#include <IlmThreadMinGWThread.h>
++#endif
++
+ #if HAVE_PTHREAD && HAVE_POSIX_SEMAPHORES
+ 
+ #include "IlmThreadSemaphore.h"
+diff --git a/IlmBase/IlmThread/IlmThreadSemaphorePosixCompat.cpp b/IlmBase/IlmThread/IlmThreadSemaphorePosixCompat.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadSemaphorePosixCompat.cpp
++++ b/IlmBase/IlmThread/IlmThreadSemaphorePosixCompat.cpp
+@@ -41,7 +41,11 @@
+ 
+ #include "IlmBaseConfig.h"
+ 
+-#if (!HAVE_POSIX_SEMAPHORES) && !defined (_WIN32) && ! defined (_WIN64) && ! defined (__APPLE__)
++#if (defined(_WIN32) || defined(_WIN64))
++#include <IlmThreadMinGWThread.h>
++#endif
++
++#if (!defined(HAVE_POSIX_SEMAPHORES)) && (!defined (_WIN32) && !defined (_WIN64) || defined(__MINGW64_VERSION_MAJOR)) && !defined (__APPLE__)
+ 
+ #include "IlmThreadSemaphore.h"
+ #include "Iex.h"
+diff --git a/IlmBase/IlmThread/IlmThreadSemaphoreWin32.cpp b/IlmBase/IlmThread/IlmThreadSemaphoreWin32.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadSemaphoreWin32.cpp
++++ b/IlmBase/IlmThread/IlmThreadSemaphoreWin32.cpp
+@@ -37,8 +37,11 @@
+ //	class Semaphore -- implementation for Windows
+ //
+ //-----------------------------------------------------------------------------
++#if (defined(_WIN32) || defined(_WIN64))
++#include <IlmThreadMinGWThread.h>
++#endif
+ 
+-#ifdef _WIN32
++#if (defined _WIN32 || defined _WIN64) && !defined(HAVE_POSIX_SEMAPHORES)
+ 
+ #include "IlmThreadSemaphore.h"
+ #include "Iex.h"
+diff --git a/IlmBase/IlmThread/IlmThreadWin32.cpp b/IlmBase/IlmThread/IlmThreadWin32.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadWin32.cpp
++++ b/IlmBase/IlmThread/IlmThreadWin32.cpp
+@@ -42,7 +42,7 @@
+ #include "IlmBaseConfig.h"
+ 
+ #ifdef ILMBASE_FORCE_CXX03
+-#ifdef _WIN32
++#if ((defined _WIN32 || defined _WIN64) && !defined(__MINGW64_VERSION_MAJOR))
+ 
+ #include "IlmThread.h"
+ #include "Iex.h"
+diff --git a/IlmBase/config/CMakeLists.txt b/IlmBase/config/CMakeLists.txt
+index 1111111..2222222 100644
+--- a/IlmBase/config/CMakeLists.txt
++++ b/IlmBase/config/CMakeLists.txt
+@@ -29,8 +29,12 @@ if(Threads_FOUND)
+ 
+   # we have threads, but do we have posix semaphores for sem_init?
+   # should be in pthreads
+-  if(NOT (APPLE OR WIN32))
+-    check_include_files(semaphore.h ILMBASE_HAVE_SEMAPHORE_H)
++  if(NOT (APPLE OR (WIN32 AND NOT MINGW)))
++    if(MINGW)
++      check_include_files(pthread_unistd.h ILMBASE_HAVE_SEMAPHORE_H)
++    else()
++      check_include_files(semaphore.h ILMBASE_HAVE_SEMAPHORE_H)
++    endif()
+     if(ILMBASE_HAVE_SEMAPHORE_H AND ILMBASE_HAVE_PTHREAD)
+       # should just be in libc, so no need for check_library_exists
+       set(CMAKE_REQUIRED_FLAGS ${CMAKE_THREAD_LIBS_INIT})
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Gregorio Litenstein <g.litenstein@gmail.com>
+Date: Wed, 16 Oct 2019 22:17:21 -0300
+Subject: [PATCH 3/4] Check for b44ExpLogTable and dwaLookups
+
+Also, make cross-building slightly easier.
+
+diff --git a/OpenEXR/IlmImf/CMakeLists.txt b/OpenEXR/IlmImf/CMakeLists.txt
+index 1111111..2222222 100644
+--- a/OpenEXR/IlmImf/CMakeLists.txt
++++ b/OpenEXR/IlmImf/CMakeLists.txt
+@@ -1,30 +1,47 @@
+ # SPDX-License-Identifier: BSD-3-Clause
+ # Copyright Contributors to the OpenEXR Project.
+ 
+-add_executable(b44ExpLogTable b44ExpLogTable.cpp)
+-target_link_libraries(b44ExpLogTable PRIVATE OpenEXR::Config IlmBase::Half IlmBase::IlmThread IlmBase::Iex)
+-set_target_properties(b44ExpLogTable PROPERTIES
+-  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+-)
+-# TODO: Old file had logic to skip these if the file already exists
+-add_custom_command(
+-  OUTPUT  ${CMAKE_CURRENT_BINARY_DIR}/b44ExpLogTable.h
+-  COMMAND $<TARGET_FILE:b44ExpLogTable> > ${CMAKE_CURRENT_BINARY_DIR}/b44ExpLogTable.h
+-  DEPENDS b44ExpLogTable
+-)
++check_include_files(${CMAKE_CURRENT_BINARY_DIR}/b44ExpLogTable.h HAVE_B44_EXP_LOG_TABLE_H)
++check_include_files(${CMAKE_CURRENT_BINARY_DIR}/dwaLookups.h HAVE_DWA_LOOKUPS_H)
+ 
++if((NOT HAVE_B44_EXP_LOG_TABLE_H) OR (NOT HAVE_DWA_LOOKUPS_H))
++  if(CMAKE_CROSSCOMPILING)
++    message(STATUS "We're cross-compiling; will use native executables from a previous build to generate b44ExpLogTable.h and dwaLookups.h")
++    set(NATIVE_OPENEXR_BUILD_DIR "NATIVE_OPENEXR-NOTFOUND" CACHE FILEPATH "Point it to the build folder of a native build.")
++    if (NATIVE_OPENEXR_BUILD_DIR)
++      set (b44ExpLogTable_PATH "${NATIVE_OPENEXR_BUILD_DIR}/bin/b44ExpLogTable")
++      set (dwaLookups_PATH "${NATIVE_OPENEXR_BUILD_DIR}/bin/dwaLookups")
++    else()
++      message(FATAL_ERROR "Missing path to native build directory.")
++    endif()
++   else()
++    add_executable(b44ExpLogTable b44ExpLogTable.cpp)
++    target_link_libraries(b44ExpLogTable PRIVATE OpenEXR::Config IlmBase::Half IlmBase::IlmThread IlmBase::Iex)
++    set_target_properties(b44ExpLogTable PROPERTIES
++      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
++    )
++    target_compile_features(b44ExpLogTable PUBLIC cxx_std_${OPENEXR_CXX_STANDARD})
++    
++    add_executable(dwaLookups dwaLookups.cpp)
++    target_link_libraries(dwaLookups PRIVATE OpenEXR::Config IlmBase::Imath IlmBase::Half IlmBase::IlmThread IlmBase::Iex)
++    set_target_properties(dwaLookups PROPERTIES
++     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
++    )
++    
++    set (b44ExpLogTable_PATH "$<TARGET_FILE:b44ExpLogTable>")
++    set (dwaLookups_PATH "$<TARGET_FILE:dwaLookups>")
++   endif()
++    add_custom_command(
++      OUTPUT
++        ${CMAKE_CURRENT_BINARY_DIR}/b44ExpLogTable.h
++        ${CMAKE_CURRENT_BINARY_DIR}/dwaLookups.h
++      COMMAND "${b44ExpLogTable_PATH}" ARGS > "${CMAKE_CURRENT_BINARY_DIR}/b44ExpLogTable.h"
++      COMMAND "${dwaLookups_PATH}" ARGS > "${CMAKE_CURRENT_BINARY_DIR}/dwaLookups.h"
++      DEPENDS $<$<NOT:$<BOOL:${CMAKE_CROSSCOMPILING}>>:b44ExpLogTable>
++      DEPENDS $<$<NOT:$<BOOL:${CMAKE_CROSSCOMPILING}>>:dwaLookups>
++    )
++endif()
+ 
+-add_executable(dwaLookups dwaLookups.cpp)
+-target_link_libraries(dwaLookups PRIVATE OpenEXR::Config IlmBase::Imath IlmBase::Half IlmBase::IlmThread IlmBase::Iex)
+-set_target_properties(dwaLookups PROPERTIES
+-  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+-)
+-# TODO: Old file had logic to skip these if the file already exists
+-add_custom_command(
+-  OUTPUT  ${CMAKE_CURRENT_BINARY_DIR}/dwaLookups.h
+-  COMMAND $<TARGET_FILE:dwaLookups> > ${CMAKE_CURRENT_BINARY_DIR}/dwaLookups.h
+-  DEPENDS dwaLookups
+-)
+ 
+ openexr_define_library(IlmImf
+   PRIV_EXPORT ILMIMF_EXPORTS
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Gregorio Litenstein <g.litenstein@gmail.com>
+Date: Sat, 19 Oct 2019 12:01:05 -0300
+Subject: [PATCH 4/4] Fix symlink creation on windows.
+
+
+diff --git a/IlmBase/config/LibraryDefine.cmake b/IlmBase/config/LibraryDefine.cmake
+index 1111111..2222222 100644
+--- a/IlmBase/config/LibraryDefine.cmake
++++ b/IlmBase/config/LibraryDefine.cmake
+@@ -98,12 +98,20 @@ function(ILMBASE_DEFINE_LIBRARY libname)
+       DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${ILMBASE_OUTPUT_SUBDIR}
+   )
+   if(BUILD_SHARED_LIBS AND (NOT "${ILMBASE_LIB_SUFFIX}" STREQUAL ""))
+-    set(verlibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname}${ILMBASE_LIB_SUFFIX}${CMAKE_SHARED_LIBRARY_SUFFIX})
+-    set(baselibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname}${CMAKE_SHARED_LIBRARY_SUFFIX})
+-    install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_INSTALL_FULL_LIBDIR} ${CMAKE_COMMAND} -E create_symlink ${verlibname} ${baselibname})")
+-    install(CODE "message(\"-- Creating symlink in ${CMAKE_INSTALL_FULL_LIBDIR} ${baselibname} -> ${verlibname}\")")
++    set(verlibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname}${ILMBASE_LIB_SUFFIX})
++    set(baselibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname})
++    if (WIN32)
++      set(fullinstallpath "${CMAKE_INSTALL_FULL_BINDIR}")
++      install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_INSTALL_FULL_LIBDIR} ${CMAKE_COMMAND} -E create_symlink ${verlibname}${CMAKE_IMPORT_LIBRARY_SUFFIX} ${baselibname}${CMAKE_IMPORT_LIBRARY_SUFFIX})")
++      install(CODE "message(\"-- Creating symlink in ${CMAKE_INSTALL_FULL_LIBDIR} ${baselibname}${CMAKE_IMPORT_LIBRARY_SUFFIX} -> ${verlibname}${CMAKE_IMPORT_LIBRARY_SUFFIX}\")")
++    else()
++      set(fullinstallpath "${CMAKE_INSTALL_FULL_LIBDIR}")
++    endif()
++    install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E chdir ${fullinstallpath} ${CMAKE_COMMAND} -E create_symlink ${verlibname}${CMAKE_SHARED_LIBRARY_SUFFIX} ${baselibname}${CMAKE_SHARED_LIBRARY_SUFFIX})")
++    install(CODE "message(\"-- Creating symlink in ${fullinstallpath} ${baselibname}${CMAKE_SHARED_LIBRARY_SUFFIX} -> ${verlibname}${CMAKE_SHARED_LIBRARY_SUFFIX}\")")
+     set(verlibname)
+     set(baselibname)
++    set(fullinstallpath)
+   endif()
+ 
+   if(ILMBASE_BUILD_BOTH_STATIC_SHARED)
+diff --git a/OpenEXR/config/LibraryDefine.cmake b/OpenEXR/config/LibraryDefine.cmake
+index 1111111..2222222 100644
+--- a/OpenEXR/config/LibraryDefine.cmake
++++ b/OpenEXR/config/LibraryDefine.cmake
+@@ -92,12 +92,20 @@ function(OPENEXR_DEFINE_LIBRARY libname)
+       DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${OPENEXR_OUTPUT_SUBDIR}
+   )
+   if(BUILD_SHARED_LIBS AND (NOT "${OPENEXR_LIB_SUFFIX}" STREQUAL ""))
+-    set(verlibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname}${OPENEXR_LIB_SUFFIX}${CMAKE_SHARED_LIBRARY_SUFFIX})
+-    set(baselibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname}${CMAKE_SHARED_LIBRARY_SUFFIX})
+-    install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_INSTALL_FULL_LIBDIR} ${CMAKE_COMMAND} -E create_symlink ${verlibname} ${baselibname})")
+-    install(CODE "message(\"-- Creating symlink in ${CMAKE_INSTALL_FULL_LIBDIR} ${baselibname} -> ${verlibname}\")")
++    set(verlibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname}${OPENEXR_LIB_SUFFIX})
++    set(baselibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname})
++    if (WIN32)
++      set(fullinstallpath "${CMAKE_INSTALL_FULL_BINDIR}")
++      install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_INSTALL_FULL_LIBDIR} ${CMAKE_COMMAND} -E create_symlink ${verlibname}${CMAKE_IMPORT_LIBRARY_SUFFIX} ${baselibname}${CMAKE_IMPORT_LIBRARY_SUFFIX})")
++      install(CODE "message(\"-- Creating symlink in ${CMAKE_INSTALL_FULL_LIBDIR} ${baselibname}${CMAKE_IMPORT_LIBRARY_SUFFIX} -> ${verlibname}${CMAKE_IMPORT_LIBRARY_SUFFIX}\")")
++    else()
++      set(fullinstallpath "${CMAKE_INSTALL_FULL_LIBDIR}")
++    endif()
++    install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E chdir ${fullinstallpath} ${CMAKE_COMMAND} -E create_symlink ${verlibname}${CMAKE_SHARED_LIBRARY_SUFFIX} ${baselibname}${CMAKE_SHARED_LIBRARY_SUFFIX})")
++    install(CODE "message(\"-- Creating symlink in ${fullinstallpath} ${baselibname}${CMAKE_SHARED_LIBRARY_SUFFIX} -> ${verlibname}${CMAKE_SHARED_LIBRARY_SUFFIX}\")")
+     set(verlibname)
+     set(baselibname)
++    set(fullinstallpath)
+   endif()
+ 
+   if(OPENEXR_BUILD_BOTH_STATIC_SHARED)
