@@ -4,78 +4,8 @@ Contains ad hoc patches for cross building.
 
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Gregorio Litenstein <g.litenstein@gmail.com>
-Date: Fri, 11 Oct 2019 22:18:02 -0300
-Subject: [PATCH 1/4] Check for eLut.h and toFloat.h before making them
-
-
-diff --git a/IlmBase/Half/CMakeLists.txt b/IlmBase/Half/CMakeLists.txt
-index 1111111..2222222 100644
---- a/IlmBase/Half/CMakeLists.txt
-+++ b/IlmBase/Half/CMakeLists.txt
-@@ -1,21 +1,44 @@
- # SPDX-License-Identifier: BSD-3-Clause
- # Copyright Contributors to the OpenEXR Project.
- 
--add_executable(eLut eLut.cpp)
--target_compile_features(eLut PUBLIC cxx_std_${OPENEXR_CXX_STANDARD})
-+check_include_files(${CMAKE_CURRENT_BINARY_DIR}/eLut.h HAVE_ELUT_H)
-+check_include_files(${CMAKE_CURRENT_BINARY_DIR}/toFloat.h HAVE_TOFLOAT_H)
- 
--
--add_executable(toFloat toFloat.cpp)
--target_compile_features(toFloat PUBLIC cxx_std_${OPENEXR_CXX_STANDARD})
--
--add_custom_command(
--  OUTPUT
--    ${CMAKE_CURRENT_BINARY_DIR}/toFloat.h
--    ${CMAKE_CURRENT_BINARY_DIR}/eLut.h
--  COMMAND $<TARGET_FILE:toFloat> ARGS > ${CMAKE_CURRENT_BINARY_DIR}/toFloat.h
--  COMMAND $<TARGET_FILE:eLut> ARGS > ${CMAKE_CURRENT_BINARY_DIR}/eLut.h
--  DEPENDS eLut toFloat
--)
-+if((NOT HAVE_ELUT_H) OR (NOT HAVE_TOFLOAT_H))
-+  if(CMAKE_CROSSCOMPILING)
-+    message(STATUS "We're cross-compiling; will use native executables from a previous build to generate toFloat.h and eLut.h")
-+    set(NATIVE_ILMBASE_BUILD_DIR "NATIVE_ILMBASE-NOTFOUND" CACHE FILEPATH "Point it to the build folder of a native build.")
-+    if (NATIVE_ILMBASE_BUILD_DIR)
-+      set (toFloat_PATH "${NATIVE_ILMBASE_BUILD_DIR}/bin/toFloat")
-+      set (eLut_PATH "${NATIVE_ILMBASE_BUILD_DIR}/bin/eLut")
-+    else()
-+      message(FATAL_ERROR "Missing path to native build directory.")
-+    endif()
-+   else()
-+    add_executable(eLut eLut.cpp)
-+    target_compile_features(eLut PUBLIC cxx_std_${OPENEXR_CXX_STANDARD})
-+    set_target_properties(eLut PROPERTIES
-+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-+    )
-+    
-+    add_executable(toFloat toFloat.cpp)
-+    target_compile_features(toFloat PUBLIC cxx_std_${OPENEXR_CXX_STANDARD})
-+    set_target_properties(toFloat PROPERTIES
-+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-+    )
-+    set (toFloat_PATH "$<TARGET_FILE:toFloat>")
-+    set (eLut_PATH "$<TARGET_FILE:eLut>")
-+   endif()
-+    add_custom_command(
-+      OUTPUT
-+        ${CMAKE_CURRENT_BINARY_DIR}/toFloat.h
-+        ${CMAKE_CURRENT_BINARY_DIR}/eLut.h
-+      COMMAND "${toFloat_PATH}" ARGS > "${CMAKE_CURRENT_BINARY_DIR}/toFloat.h"
-+      COMMAND "${eLut_PATH}" ARGS > "${CMAKE_CURRENT_BINARY_DIR}/eLut.h"
-+      DEPENDS $<$<NOT:$<BOOL:${CMAKE_CROSSCOMPILING}>>:eLut>
-+      DEPENDS $<$<NOT:$<BOOL:${CMAKE_CROSSCOMPILING}>>:toFloat>
-+    )
-+endif()
- 
- ### Now define the real library
- 
-
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Gregorio Litenstein <g.litenstein@gmail.com>
-Date: Fri, 11 Oct 2019 22:18:40 -0300
-Subject: [PATCH 2/4] Support for MinGW-W64 with pthreads
+Date: Tue, 22 Oct 2019 15:25:39 -0300
+Subject: [PATCH 1/9] Support for MinGW-W64 with pthreads
 
 
 diff --git a/IlmBase/IlmThread/CMakeLists.txt b/IlmBase/IlmThread/CMakeLists.txt
@@ -295,17 +225,6 @@ diff --git a/IlmBase/IlmThread/IlmThreadSemaphore.h b/IlmBase/IlmThread/IlmThrea
 index 1111111..2222222 100644
 --- a/IlmBase/IlmThread/IlmThreadSemaphore.h
 +++ b/IlmBase/IlmThread/IlmThreadSemaphore.h
-@@ -37,8 +37,8 @@
- 
- //-----------------------------------------------------------------------------
- //
--//	class Semaphore -- a wrapper class for
--//	system-dependent counting semaphores
-+//  class Semaphore -- a wrapper class for
-+//  system-dependent counting semaphores
- //
- //-----------------------------------------------------------------------------
- 
 @@ -46,24 +46,24 @@
  #include "IlmThreadExport.h"
  #include "IlmThreadNamespace.h"
@@ -348,82 +267,14 @@ index 1111111..2222222 100644
  #   endif
  #endif
  
-@@ -77,38 +77,38 @@ class ILMTHREAD_EXPORT Semaphore
-     Semaphore (unsigned int value = 0);
-     virtual ~Semaphore();
- 
--    void	wait();
--    bool	tryWait();
--    void	post();
--    int		value() const;
-+    void    wait();
-+    bool    tryWait();
-+    void    post();
-+    int     value() const;
+@@ -84,7 +84,7 @@ class ILMTHREAD_EXPORT Semaphore
  
    private:
  
 -#if defined _WIN32 || defined _WIN64
 +#if ((defined _WIN32 || defined _WIN64) && !defined(HAVE_POSIX_SEMAPHORES))
  
--	mutable HANDLE _semaphore;
-+    mutable HANDLE _semaphore;
- 
- #elif defined(HAVE_POSIX_SEMAPHORES)
- 
--	mutable sem_t _semaphore;
-+    mutable sem_t _semaphore;
- 
- #elif defined(__APPLE__)
--	mutable dispatch_semaphore_t _semaphore;
-+    mutable dispatch_semaphore_t _semaphore;
- 
- #else
--	//
--	// If the platform has Posix threads but no semapohores,
--	// then we implement them ourselves using condition variables
--	//
--
--	struct sema_t
--	{
--	    unsigned int count;
--	    unsigned long numWaiting;
-+    //
-+    // If the platform has Posix threads but no semapohores,
-+    // then we implement them ourselves using condition variables
-+    //
-+
-+    struct sema_t
-+    {
-+        unsigned int count;
-+        unsigned long numWaiting;
- #   if ILMBASE_FORCE_CXX03
- #      if HAVE_PTHREAD
--	    pthread_mutex_t mutex;
--	    pthread_cond_t nonZero;
-+        pthread_mutex_t mutex;
-+        pthread_cond_t nonZero;
- #      else
- #         error unhandled legacy setup
- #      endif
-@@ -116,14 +116,14 @@ class ILMTHREAD_EXPORT Semaphore
-         std::mutex mutex;
-         std::condition_variable nonZero;
- #   endif
--	};
-+    };
- 
--	mutable sema_t _semaphore;
-+    mutable sema_t _semaphore;
-   
- #endif
- 
--    void operator = (const Semaphore& s);	// not implemented
--    Semaphore (const Semaphore& s);		// not implemented
-+    void operator = (const Semaphore& s);   // not implemented
-+    Semaphore (const Semaphore& s);     // not implemented
- };
- 
+ 	mutable HANDLE _semaphore;
  
 diff --git a/IlmBase/IlmThread/IlmThreadSemaphorePosix.cpp b/IlmBase/IlmThread/IlmThreadSemaphorePosix.cpp
 index 1111111..2222222 100644
@@ -509,8 +360,1528 @@ index 1111111..2222222 100644
 
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Gregorio Litenstein <g.litenstein@gmail.com>
+Date: Tue, 22 Oct 2019 15:26:25 -0300
+Subject: [PATCH 2/9] Fix mixed tab and space; use only spaces instead.
+
+
+diff --git a/IlmBase/IlmThread/IlmThread.cpp b/IlmBase/IlmThread/IlmThread.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThread.cpp
++++ b/IlmBase/IlmThread/IlmThread.cpp
+@@ -34,10 +34,10 @@
+ 
+ //-----------------------------------------------------------------------------
+ //
+-//	class Thread -- this file contains two implementations of thread:
+-//	- dummy implementation for platforms that do not support threading
+-//	  when OPENEXR_FORCE_CXX03 is on
+-//	- c++11 and newer version
++//  class Thread -- this file contains two implementations of thread:
++//  - dummy implementation for platforms that do not support threading
++//    when OPENEXR_FORCE_CXX03 is on
++//  - c++11 and newer version
+ //
+ //-----------------------------------------------------------------------------
+ 
+diff --git a/IlmBase/IlmThread/IlmThread.h b/IlmBase/IlmThread/IlmThread.h
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThread.h
++++ b/IlmBase/IlmThread/IlmThread.h
+@@ -37,56 +37,56 @@
+ 
+ //-----------------------------------------------------------------------------
+ //
+-//	class Thread
+-//
+-//	Class Thread is a portable interface to a system-dependent thread
+-//	primitive.  In order to make a thread actually do something useful,
+-//	you must derive a subclass from class Thread and implement the
+-//	run() function.  If the operating system supports threading then
+-//	the run() function will be executed int a new thread.
+-//
+-//	The actual creation of the thread is done by the start() routine
+-//	which then calls the run() function.  In general the start()
+-//	routine should be called from the constructor of the derived class.
+-//
+-//	The base-class thread destructor will join/destroy the thread.
+-//
+-//	IMPORTANT: Due to the mechanisms that encapsulate the low-level
+-//	threading primitives in a C++ class there is a race condition
+-//	with code resembling the following:
+-//
+-//	    {
+-//		WorkerThread myThread;
+-//	    } // myThread goes out of scope, is destroyed
+-//	      // and the thread is joined
+-//
+-//	The race is between the parent thread joining the child thread
+-//	in the destructor of myThread, and the run() function in the
+-//	child thread.  If the destructor gets executed first then run()
+-//	will be called with an invalid "this" pointer.
+-//
+-//	This issue can be fixed by using a Semaphore to keep track of
+-//	whether the run() function has already been called.  You can
+-//	include a Semaphore member variable within your derived class
+-//	which you post() on in the run() function, and wait() on in the
+-//	destructor before the thread is joined.  Alternatively you could
+-//	do something like this:
+-//
+-//	    Semaphore runStarted;
+-//
+-//	    void WorkerThread::run ()
+-//	    {
+-//		runStarted.post()
+-//		// do some work
+-//		...
+-//	    }
+-//
+-//	    {
+-//		WorkerThread myThread;
+-//		runStarted.wait ();    // ensure that we have started
+-//				       // the run function
+-//	    } // myThread goes out of scope, is destroyed
+-//	      // and the thread is joined
++//  class Thread
++//
++//  Class Thread is a portable interface to a system-dependent thread
++//  primitive.  In order to make a thread actually do something useful,
++//  you must derive a subclass from class Thread and implement the
++//  run() function.  If the operating system supports threading then
++//  the run() function will be executed int a new thread.
++//
++//  The actual creation of the thread is done by the start() routine
++//  which then calls the run() function.  In general the start()
++//  routine should be called from the constructor of the derived class.
++//
++//  The base-class thread destructor will join/destroy the thread.
++//
++//  IMPORTANT: Due to the mechanisms that encapsulate the low-level
++//  threading primitives in a C++ class there is a race condition
++//  with code resembling the following:
++//
++//      {
++//      WorkerThread myThread;
++//      } // myThread goes out of scope, is destroyed
++//        // and the thread is joined
++//
++//  The race is between the parent thread joining the child thread
++//  in the destructor of myThread, and the run() function in the
++//  child thread.  If the destructor gets executed first then run()
++//  will be called with an invalid "this" pointer.
++//
++//  This issue can be fixed by using a Semaphore to keep track of
++//  whether the run() function has already been called.  You can
++//  include a Semaphore member variable within your derived class
++//  which you post() on in the run() function, and wait() on in the
++//  destructor before the thread is joined.  Alternatively you could
++//  do something like this:
++//
++//      Semaphore runStarted;
++//
++//      void WorkerThread::run ()
++//      {
++//      runStarted.post()
++//      // do some work
++//      ...
++//      }
++//
++//      {
++//      WorkerThread myThread;
++//      runStarted.wait ();    // ensure that we have started
++//                     // the run function
++//      } // myThread goes out of scope, is destroyed
++//        // and the thread is joined
+ //
+ //-----------------------------------------------------------------------------
+ 
+@@ -100,12 +100,12 @@
+ 
+ #ifdef ILMBASE_FORCE_CXX03
+ #   if ((defined _WIN32 || defined _WIN64) && !defined(HAVE_PTHREAD))
+-#       ifdef NOMINMAX
+-#          undef NOMINMAX
+-#       endif
+-#       define NOMINMAX
+-#       include <windows.h>
+-#       include <process.h>
++#     ifdef NOMINMAX
++#        undef NOMINMAX
++#     endif
++#     define NOMINMAX
++#     include <windows.h>
++#     include <process.h>
+ #   elif HAVE_PTHREAD
+ #      include <pthread.h>
+ #   endif
+@@ -130,19 +130,19 @@ class Thread
+     ILMTHREAD_EXPORT Thread ();
+     ILMTHREAD_EXPORT virtual ~Thread ();
+ 
+-    ILMTHREAD_EXPORT void         start ();
++    ILMTHREAD_EXPORT void start ();
+     ILMTHREAD_EXPORT virtual void run () = 0;
+ 
+   private:
+ 
+ #ifdef ILMBASE_FORCE_CXX03
+ #   if ((defined _WIN32 || defined _WIN64) && !defined(HAVE_PTHREAD))
+-	HANDLE _thread;
++    HANDLE _thread;
+ #   elif HAVE_PTHREAD
+-	pthread_t _thread;
++    pthread_t _thread;
+ #   endif
+-    void operator = (const Thread& t);	// not implemented
+-    Thread (const Thread& t);		// not implemented
++    void operator = (const Thread& t);  // not implemented
++    Thread (const Thread& t);           // not implemented
+ #else
+     std::thread _thread;
+ 
+diff --git a/IlmBase/IlmThread/IlmThreadExport.h b/IlmBase/IlmThread/IlmThreadExport.h
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadExport.h
++++ b/IlmBase/IlmThread/IlmThreadExport.h
+@@ -34,11 +34,11 @@
+ 
+ #if defined(OPENEXR_DLL)
+     #if defined(ILMTHREAD_EXPORTS)
+-	    #define ILMTHREAD_EXPORT __declspec(dllexport)
++        #define ILMTHREAD_EXPORT __declspec(dllexport)
+         #define ILMTHREAD_EXPORT_CONST extern __declspec(dllexport)
+     #else
+-	    #define ILMTHREAD_EXPORT __declspec(dllimport)
+-	    #define ILMTHREAD_EXPORT_CONST extern __declspec(dllimport)
++        #define ILMTHREAD_EXPORT __declspec(dllimport)
++        #define ILMTHREAD_EXPORT_CONST extern __declspec(dllimport)
+     #endif
+ #else
+     #define ILMTHREAD_EXPORT
+diff --git a/IlmBase/IlmThread/IlmThreadMutex.cpp b/IlmBase/IlmThread/IlmThreadMutex.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadMutex.cpp
++++ b/IlmBase/IlmThread/IlmThreadMutex.cpp
+@@ -34,8 +34,8 @@
+ 
+ //-----------------------------------------------------------------------------
+ //
+-//	class Mutex, class Lock -- dummy implementation
+-//	for platforms that do not support threading
++//  class Mutex, class Lock -- dummy implementation
++//  for platforms that do not support threading
+ //
+ //-----------------------------------------------------------------------------
+ 
+diff --git a/IlmBase/IlmThread/IlmThreadMutex.h b/IlmBase/IlmThread/IlmThreadMutex.h
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadMutex.h
++++ b/IlmBase/IlmThread/IlmThreadMutex.h
+@@ -37,32 +37,32 @@
+ 
+ //-----------------------------------------------------------------------------
+ //
+-//	class Mutex, class Lock
++//  class Mutex, class Lock
+ //
+-//	Class Mutex is a wrapper for a system-dependent mutual exclusion
+-//	mechanism.  Actual locking and unlocking of a Mutex object must
+-//	be performed using an instance of a Lock (defined below).
++//  Class Mutex is a wrapper for a system-dependent mutual exclusion
++//  mechanism.  Actual locking and unlocking of a Mutex object must
++//  be performed using an instance of a Lock (defined(below)).
+ //
+-//	Class lock provides safe locking and unlocking of mutexes even in
+-//	the presence of C++ exceptions.  Constructing a Lock object locks
+-//	the mutex; destroying the Lock unlocks the mutex.
++//  Class lock provides safe locking and unlocking of mutexes even in
++//  the presence of C++ exceptions.  Constructing a Lock object locks
++//  the mutex; destroying the Lock unlocks the mutex.
+ //
+-//	Lock objects are not themselves thread-safe.  You should never
+-//	share a Lock object among multiple threads.
++//  Lock objects are not themselves thread-safe.  You should never
++//  share a Lock object among multiple threads.
+ //
+-//	Typical usage:
++//  Typical usage:
+ //    
+-//	    Mutex mtx;	// Create a Mutex object that is visible
+-//	    		//to multiple threads
++//      Mutex mtx;  // Create a Mutex object that is visible
++//              //to multiple threads
+ //
+-//	    ...		// create some threads
++//      ...     // create some threads
+ //
+-//	    // Then, within each thread, construct a critical section like so:
++//      // Then, within each thread, construct a critical section like so:
+ //
+-//	    {
+-//		Lock lock (mtx);	// Lock constructor locks the mutex
+-//		...			// do some computation on shared data
+-//	    }				// leaving the block unlocks the mutex
++//      {
++//      Lock lock (mtx);    // Lock constructor locks the mutex
++//      ...         // do some computation on shared data
++//      }               // leaving the block unlocks the mutex
+ //
+ //-----------------------------------------------------------------------------
+ 
+@@ -117,17 +117,17 @@ class ILMTHREAD_EXPORT Mutex
+ 
+   private:
+ 
+-    void	lock () const;
+-    void	unlock () const;
++    void lock () const;
++    void unlock () const;
+ 
+     #if (defined _WIN32 || defined _WIN64)
+-	mutable CRITICAL_SECTION _mutex;
+     #elif HAVE_PTHREAD
+-	mutable pthread_mutex_t _mutex;
++    mutable CRITICAL_SECTION _mutex;
++    mutable pthread_mutex_t _mutex;
+     #endif
+ 
+-    void operator = (const Mutex& M);	// not implemented
+-    Mutex (const Mutex& M);		// not implemented
++    void operator = (const Mutex& M);  // not implemented
++    Mutex (const Mutex& M);            // not implemented
+     
+     friend class Lock;
+ };
+@@ -179,7 +179,7 @@ class ILMTHREAD_EXPORT Lock
+   private:
+ 
+     Mutex & _mutex;
+-    bool    _locked;
++    bool _locked;
+ };
+ 
+ 
+diff --git a/IlmBase/IlmThread/IlmThreadPool.cpp b/IlmBase/IlmThread/IlmThreadPool.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadPool.cpp
++++ b/IlmBase/IlmThread/IlmThreadPool.cpp
+@@ -67,17 +67,17 @@ struct TaskGroup::Data
+      Data ();
+     ~Data ();
+     
+-    void    addTask () ;
+-    void    removeTask ();
+ #ifndef ILMBASE_FORCE_CXX03
++    void addTask () ;
++    void removeTask ();
+     std::atomic<int> numPending;
+ #else
+-    int              numPending;     // number of pending tasks to still execute
++    int numPending;     // number of pending tasks to still execute
+ #endif
+-    Semaphore        isEmpty;        // used to signal that the taskgroup is empty
++    Semaphore isEmpty;        // used to signal that the taskgroup is empty
+ #if defined(ENABLE_SEM_DTOR_WORKAROUND) || defined(ILMBASE_FORCE_CXX03)
+     // this mutex is also used to lock numPending in the legacy c++ mode...
+-    Mutex            dtorMutex;      // used to work around the glibc bug:
++    Mutex dtorMutex;      // used to work around the glibc bug:
+                                      // http://sources.redhat.com/bugzilla/show_bug.cgi?id=12674
+ #endif
+ };
+@@ -219,7 +219,7 @@ class DefaultWorkerThread: public Thread
+ 
+     DefaultWorkerThread (DefaultWorkData* data);
+ 
+-    virtual void    run ();
++    virtual void run ();
+     
+   private:
+ 
+diff --git a/IlmBase/IlmThread/IlmThreadPool.h b/IlmBase/IlmThread/IlmThreadPool.h
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadPool.h
++++ b/IlmBase/IlmThread/IlmThreadPool.h
+@@ -38,26 +38,26 @@
+ 
+ //-----------------------------------------------------------------------------
+ //
+-//	class Task, class ThreadPool, class TaskGroup
++//  class Task, class ThreadPool, class TaskGroup
+ //
+-//	Class ThreadPool manages a set of worker threads and accepts
+-//	tasks for processing.  Tasks added to the thread pool are
+-//	executed concurrently by the worker threads.  
+-//	
+-//	Class Task provides an abstract interface for a task which
+-//	a ThreadPool works on.  Derived classes need to implement the
+-//	execute() function which performs the actual task.
++//  Class ThreadPool manages a set of worker threads and accepts
++//  tasks for processing.  Tasks added to the thread pool are
++//  executed concurrently by the worker threads.  
++//  
++//  Class Task provides an abstract interface for a task which
++//  a ThreadPool works on.  Derived classes need to implement the
++//  execute() function which performs the actual task.
+ //
+-//	Class TaskGroup allows synchronization on the completion of a set
+-//	of tasks.  Every task that is added to a ThreadPool belongs to a
+-//	single TaskGroup.  The destructor of the TaskGroup waits for all
+-//	tasks in the group to finish.
++//  Class TaskGroup allows synchronization on the completion of a set
++//  of tasks.  Every task that is added to a ThreadPool belongs to a
++//  single TaskGroup.  The destructor of the TaskGroup waits for all
++//  tasks in the group to finish.
+ //
+-//	Note: if you plan to use the ThreadPool interface in your own
+-//	applications note that the implementation of the ThreadPool calls
+-//	operator delete on tasks as they complete.  If you define a custom
+-//	operator new for your tasks, for instance to use a custom heap,
+-//	then you must also write an appropriate operator delete.
++//  Note: if you plan to use the ThreadPool interface in your own
++//  applications note that the implementation of the ThreadPool calls
++//  operator delete on tasks as they complete.  If you define a custom
++//  operator new for your tasks, for instance to use a custom heap,
++//  then you must also write an appropriate operator delete.
+ //
+ //-----------------------------------------------------------------------------
+ 
+@@ -149,8 +149,8 @@ class ILMTHREAD_EXPORT ThreadPool
+     // or crash.
+     //--------------------------------------------------------
+     
+-    int		numThreads () const;
+-    void	setNumThreads (int count);
++    int numThreads () const;
++    void setNumThreads (int count);
+ 
+     //--------------------------------------------------------
+     // Set the thread provider for the pool.
+@@ -163,7 +163,7 @@ class ILMTHREAD_EXPORT ThreadPool
+     // thread as this will almost certainly cause a deadlock
+     // or crash.
+     //--------------------------------------------------------
+-    void    setThreadProvider (ThreadPoolProvider *provider);
++    void setThreadProvider (ThreadPoolProvider *provider);
+ 
+     //------------------------------------------------------------
+     // Add a task for processing.  The ThreadPool can handle any
+@@ -179,14 +179,14 @@ class ILMTHREAD_EXPORT ThreadPool
+     // Access functions for the global threadpool
+     //-------------------------------------------
+     
+-    static ThreadPool&	globalThreadPool ();
+-    static void		addGlobalTask (Task* task);
++    static ThreadPool&  globalThreadPool ();
++    static void addGlobalTask (Task* task);
+ 
+     struct Data;
+ 
+   protected:
+ 
+-    Data *		_data;
++    Data * _data;
+ };
+ 
+ 
+@@ -201,12 +201,12 @@ class ILMTHREAD_EXPORT Task
+     Task (Task&&) = delete;
+     Task& operator= (Task&&) = delete;
+ 
+-    virtual void	execute () = 0;
+-    TaskGroup *		group();
++    virtual void execute () = 0;
++    TaskGroup * group();
+ 
+   protected:
+ 
+-    TaskGroup *		_group;
++    TaskGroup * _group;
+ };
+ 
+ 
+@@ -223,7 +223,7 @@ class ILMTHREAD_EXPORT TaskGroup
+     void finishOneTask ();
+ 
+     struct Data;
+-    Data* const		_data;
++    Data* const _data;
+ };
+ 
+ 
+diff --git a/IlmBase/IlmThread/IlmThreadSemaphore.h b/IlmBase/IlmThread/IlmThreadSemaphore.h
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadSemaphore.h
++++ b/IlmBase/IlmThread/IlmThreadSemaphore.h
+@@ -37,8 +37,8 @@
+ 
+ //-----------------------------------------------------------------------------
+ //
+-//	class Semaphore -- a wrapper class for
+-//	system-dependent counting semaphores
++//  class Semaphore -- a wrapper class for
++//  system-dependent counting semaphores
+ //
+ //-----------------------------------------------------------------------------
+ 
+@@ -77,38 +77,38 @@ class ILMTHREAD_EXPORT Semaphore
+     Semaphore (unsigned int value = 0);
+     virtual ~Semaphore();
+ 
+-    void	wait();
+-    bool	tryWait();
+-    void	post();
+-    int		value() const;
++    void wait();
++    bool tryWait();
++    void post();
++    int value() const;
+ 
+   private:
+ 
+ #if ((defined _WIN32 || defined _WIN64) && !defined(HAVE_POSIX_SEMAPHORES))
+ 
+-	mutable HANDLE _semaphore;
++    mutable HANDLE _semaphore;
+ 
+ #elif defined(HAVE_POSIX_SEMAPHORES)
+ 
+-	mutable sem_t _semaphore;
++    mutable sem_t _semaphore;
+ 
+ #elif defined(__APPLE__)
+-	mutable dispatch_semaphore_t _semaphore;
++    mutable dispatch_semaphore_t _semaphore;
+ 
+ #else
+-	//
+-	// If the platform has Posix threads but no semapohores,
+-	// then we implement them ourselves using condition variables
+-	//
+-
+-	struct sema_t
+-	{
+-	    unsigned int count;
+-	    unsigned long numWaiting;
++    //
++    // If the platform has Posix threads but no semapohores,
++    // then we implement them ourselves using condition variables
++    //
++
++    struct sema_t
++    {
++        unsigned int count;
++        unsigned long numWaiting;
+ #   if ILMBASE_FORCE_CXX03
+ #      if HAVE_PTHREAD
+-	    pthread_mutex_t mutex;
+-	    pthread_cond_t nonZero;
++        pthread_mutex_t mutex;
++        pthread_cond_t nonZero;
+ #      else
+ #         error unhandled legacy setup
+ #      endif
+@@ -116,14 +116,14 @@ class ILMTHREAD_EXPORT Semaphore
+         std::mutex mutex;
+         std::condition_variable nonZero;
+ #   endif
+-	};
++    };
+ 
+-	mutable sema_t _semaphore;
++    mutable sema_t _semaphore;
+   
+ #endif
+ 
+-    void operator = (const Semaphore& s);	// not implemented
+-    Semaphore (const Semaphore& s);		// not implemented
++    void operator = (const Semaphore& s);   // not implemented
++    Semaphore (const Semaphore& s);     // not implemented
+ };
+ 
+ 
+diff --git a/IlmBase/IlmThread/IlmThreadSemaphorePosixCompat.cpp b/IlmBase/IlmThread/IlmThreadSemaphorePosixCompat.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadSemaphorePosixCompat.cpp
++++ b/IlmBase/IlmThread/IlmThreadSemaphorePosixCompat.cpp
+@@ -34,8 +34,8 @@
+ 
+ //-----------------------------------------------------------------------------
+ //
+-//	class Semaphore -- implementation for for platforms that do
+-//	support Posix threads but do not support Posix semaphores
++//  class Semaphore -- implementation for for platforms that do
++//  support Posix threads but do not support Posix semaphores
+ //
+ //-----------------------------------------------------------------------------
+ 
+diff --git a/IlmBase/IlmThread/IlmThreadSemaphoreWin32.cpp b/IlmBase/IlmThread/IlmThreadSemaphoreWin32.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadSemaphoreWin32.cpp
++++ b/IlmBase/IlmThread/IlmThreadSemaphoreWin32.cpp
+@@ -34,7 +34,7 @@
+ 
+ //-----------------------------------------------------------------------------
+ //
+-//	class Semaphore -- implementation for Windows
++//  class Semaphore -- implementation for Windows
+ //
+ //-----------------------------------------------------------------------------
+ #if (defined(_WIN32) || defined(_WIN64))
+@@ -68,17 +68,17 @@ errorString ()
+     //
+ 
+     if (bufferLength = FormatMessageA (FORMAT_MESSAGE_ALLOCATE_BUFFER |
+-				       FORMAT_MESSAGE_IGNORE_INSERTS |
+-				       FORMAT_MESSAGE_FROM_SYSTEM,
+-				       0,
+-				       GetLastError (),
+-				       MAKELANGID (LANG_NEUTRAL,
+-						   SUBLANG_DEFAULT),
+-				       (LPSTR) &messageBuffer,
+-				       0,
+-				       NULL))
++                       FORMAT_MESSAGE_IGNORE_INSERTS |
++                       FORMAT_MESSAGE_FROM_SYSTEM,
++                       0,
++                       GetLastError (),
++                       MAKELANGID (LANG_NEUTRAL,
++                           SUBLANG_DEFAULT),
++                       (LPSTR) &messageBuffer,
++                       0,
++                       NULL))
+     {
+-	message = messageBuffer;
++    message = messageBuffer;
+         LocalFree (messageBuffer);
+     }
+ 
+@@ -92,8 +92,8 @@ Semaphore::Semaphore (unsigned int value)
+ {
+     if ((_semaphore = ::CreateSemaphore (0, value, 0x7fffffff, 0)) == 0)
+     {
+-	THROW (LogicExc, "Could not create semaphore "
+-			 "(" << errorString() << ").");
++    THROW (LogicExc, "Could not create semaphore "
++             "(" << errorString() << ").");
+     }
+ }
+ 
+@@ -110,8 +110,8 @@ Semaphore::wait()
+ {
+     if (::WaitForSingleObject (_semaphore, INFINITE) != WAIT_OBJECT_0)
+     {
+-	THROW (LogicExc, "Could not wait on semaphore "
+-			 "(" << errorString() << ").");
++    THROW (LogicExc, "Could not wait on semaphore "
++             "(" << errorString() << ").");
+     }
+ }
+ 
+@@ -128,8 +128,8 @@ Semaphore::post()
+ {
+     if (!::ReleaseSemaphore (_semaphore, 1, 0))
+     {
+-	THROW (LogicExc, "Could not post on semaphore "
+-			 "(" << errorString() << ").");
++    THROW (LogicExc, "Could not post on semaphore "
++             "(" << errorString() << ").");
+     }
+ }
+ 
+@@ -141,8 +141,8 @@ Semaphore::value() const
+ 
+     if (!::ReleaseSemaphore (_semaphore, 0, &v) || v < 0)
+     {
+-	THROW (LogicExc, "Could not get value of semaphore "
+-			 "(" << errorString () << ").");
++    THROW (LogicExc, "Could not get value of semaphore "
++             "(" << errorString () << ").");
+     }
+ 
+     return v;
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Gregorio Litenstein <g.litenstein@gmail.com>
+Date: Sat, 19 Oct 2019 12:01:05 -0300
+Subject: [PATCH 3/9] Fix symlink creation on windows.
+
+
+diff --git a/IlmBase/config/LibraryDefine.cmake b/IlmBase/config/LibraryDefine.cmake
+index 1111111..2222222 100644
+--- a/IlmBase/config/LibraryDefine.cmake
++++ b/IlmBase/config/LibraryDefine.cmake
+@@ -98,12 +98,20 @@ function(ILMBASE_DEFINE_LIBRARY libname)
+       DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${ILMBASE_OUTPUT_SUBDIR}
+   )
+   if(BUILD_SHARED_LIBS AND (NOT "${ILMBASE_LIB_SUFFIX}" STREQUAL ""))
+-    set(verlibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname}${ILMBASE_LIB_SUFFIX}${CMAKE_SHARED_LIBRARY_SUFFIX})
+-    set(baselibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname}${CMAKE_SHARED_LIBRARY_SUFFIX})
+-    install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_INSTALL_FULL_LIBDIR} ${CMAKE_COMMAND} -E create_symlink ${verlibname} ${baselibname})")
+-    install(CODE "message(\"-- Creating symlink in ${CMAKE_INSTALL_FULL_LIBDIR} ${baselibname} -> ${verlibname}\")")
++    set(verlibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname}${ILMBASE_LIB_SUFFIX})
++    set(baselibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname})
++    if (WIN32)
++      set(fullinstallpath "${CMAKE_INSTALL_FULL_BINDIR}")
++      install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_INSTALL_FULL_LIBDIR} ${CMAKE_COMMAND} -E create_symlink ${verlibname}${CMAKE_IMPORT_LIBRARY_SUFFIX} ${baselibname}${CMAKE_IMPORT_LIBRARY_SUFFIX})")
++      install(CODE "message(\"-- Creating symlink in ${CMAKE_INSTALL_FULL_LIBDIR} ${baselibname}${CMAKE_IMPORT_LIBRARY_SUFFIX} -> ${verlibname}${CMAKE_IMPORT_LIBRARY_SUFFIX}\")")
++    else()
++      set(fullinstallpath "${CMAKE_INSTALL_FULL_LIBDIR}")
++    endif()
++    install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E chdir ${fullinstallpath} ${CMAKE_COMMAND} -E create_symlink ${verlibname}${CMAKE_SHARED_LIBRARY_SUFFIX} ${baselibname}${CMAKE_SHARED_LIBRARY_SUFFIX})")
++    install(CODE "message(\"-- Creating symlink in ${fullinstallpath} ${baselibname}${CMAKE_SHARED_LIBRARY_SUFFIX} -> ${verlibname}${CMAKE_SHARED_LIBRARY_SUFFIX}\")")
+     set(verlibname)
+     set(baselibname)
++    set(fullinstallpath)
+   endif()
+ 
+   if(ILMBASE_BUILD_BOTH_STATIC_SHARED)
+diff --git a/OpenEXR/config/LibraryDefine.cmake b/OpenEXR/config/LibraryDefine.cmake
+index 1111111..2222222 100644
+--- a/OpenEXR/config/LibraryDefine.cmake
++++ b/OpenEXR/config/LibraryDefine.cmake
+@@ -92,12 +92,20 @@ function(OPENEXR_DEFINE_LIBRARY libname)
+       DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${OPENEXR_OUTPUT_SUBDIR}
+   )
+   if(BUILD_SHARED_LIBS AND (NOT "${OPENEXR_LIB_SUFFIX}" STREQUAL ""))
+-    set(verlibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname}${OPENEXR_LIB_SUFFIX}${CMAKE_SHARED_LIBRARY_SUFFIX})
+-    set(baselibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname}${CMAKE_SHARED_LIBRARY_SUFFIX})
+-    install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_INSTALL_FULL_LIBDIR} ${CMAKE_COMMAND} -E create_symlink ${verlibname} ${baselibname})")
+-    install(CODE "message(\"-- Creating symlink in ${CMAKE_INSTALL_FULL_LIBDIR} ${baselibname} -> ${verlibname}\")")
++    set(verlibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname}${OPENEXR_LIB_SUFFIX})
++    set(baselibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname})
++    if (WIN32)
++      set(fullinstallpath "${CMAKE_INSTALL_FULL_BINDIR}")
++      install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_INSTALL_FULL_LIBDIR} ${CMAKE_COMMAND} -E create_symlink ${verlibname}${CMAKE_IMPORT_LIBRARY_SUFFIX} ${baselibname}${CMAKE_IMPORT_LIBRARY_SUFFIX})")
++      install(CODE "message(\"-- Creating symlink in ${CMAKE_INSTALL_FULL_LIBDIR} ${baselibname}${CMAKE_IMPORT_LIBRARY_SUFFIX} -> ${verlibname}${CMAKE_IMPORT_LIBRARY_SUFFIX}\")")
++    else()
++      set(fullinstallpath "${CMAKE_INSTALL_FULL_LIBDIR}")
++    endif()
++    install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E chdir ${fullinstallpath} ${CMAKE_COMMAND} -E create_symlink ${verlibname}${CMAKE_SHARED_LIBRARY_SUFFIX} ${baselibname}${CMAKE_SHARED_LIBRARY_SUFFIX})")
++    install(CODE "message(\"-- Creating symlink in ${fullinstallpath} ${baselibname}${CMAKE_SHARED_LIBRARY_SUFFIX} -> ${verlibname}${CMAKE_SHARED_LIBRARY_SUFFIX}\")")
+     set(verlibname)
+     set(baselibname)
++    set(fullinstallpath)
+   endif()
+ 
+   if(OPENEXR_BUILD_BOTH_STATIC_SHARED)
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Gregorio Litenstein <g.litenstein@gmail.com>
+Date: Tue, 22 Oct 2019 15:11:01 -0300
+Subject: [PATCH 4/9] Homogenize usage of #ifdef/#ifndef/#if defined
+
+
+diff --git a/IlmBase/IlmThread/IlmThread.cpp b/IlmBase/IlmThread/IlmThread.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThread.cpp
++++ b/IlmBase/IlmThread/IlmThread.cpp
+@@ -80,7 +80,7 @@ Thread::start ()
+ }
+ 
+ #else
+-#   if !defined (_WIN32) &&!(_WIN64) && !(HAVE_PTHREAD)
++#   if (!defined(_WIN32) && !defined(_WIN64) && !defined(HAVE_PTHREAD))
+ //-----------------------------------------------------------------------------
+ // OPENEXR_FORCE_CXX03 with no windows / pthread support
+ //-----------------------------------------------------------------------------
+diff --git a/IlmBase/IlmThread/IlmThread.h b/IlmBase/IlmThread/IlmThread.h
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThread.h
++++ b/IlmBase/IlmThread/IlmThread.h
+@@ -99,7 +99,7 @@
+ #endif
+ 
+ #ifdef ILMBASE_FORCE_CXX03
+-#   if ((defined _WIN32 || defined _WIN64) && !defined(HAVE_PTHREAD))
++#   if ((defined(_WIN32) || defined(_WIN64)) && !defined(HAVE_PTHREAD))
+ #     ifdef NOMINMAX
+ #        undef NOMINMAX
+ #     endif
+@@ -136,7 +136,7 @@ class Thread
+   private:
+ 
+ #ifdef ILMBASE_FORCE_CXX03
+-#   if ((defined _WIN32 || defined _WIN64) && !defined(HAVE_PTHREAD))
++#   if ((defined(_WIN32) || defined(_WIN64)) && !defined(HAVE_PTHREAD))
+     HANDLE _thread;
+ #   elif HAVE_PTHREAD
+     pthread_t _thread;
+diff --git a/IlmBase/IlmThread/IlmThreadExport.h b/IlmBase/IlmThread/IlmThreadExport.h
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadExport.h
++++ b/IlmBase/IlmThread/IlmThreadExport.h
+@@ -32,8 +32,8 @@
+ //
+ ///////////////////////////////////////////////////////////////////////////
+ 
+-#if defined(OPENEXR_DLL)
+-    #if defined(ILMTHREAD_EXPORTS)
++#ifdef OPENEXR_DLL
++    #ifdef ILMTHREAD_EXPORTS
+         #define ILMTHREAD_EXPORT __declspec(dllexport)
+         #define ILMTHREAD_EXPORT_CONST extern __declspec(dllexport)
+     #else
+diff --git a/IlmBase/IlmThread/IlmThreadMinGWThread.h b/IlmBase/IlmThread/IlmThreadMinGWThread.h
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadMinGWThread.h
++++ b/IlmBase/IlmThread/IlmThreadMinGWThread.h
+@@ -49,7 +49,7 @@
+ # endif
+ # define NOMINMAX
+ # include <windows.h>
+-# if defined(__MINGW64_VERSION_MAJOR)
++# ifdef __MINGW64_VERSION_MAJOR
+ #   include <pthread_unistd.h>
+ #   if (defined(_POSIX_SEMAPHORES) && !defined(HAVE_POSIX_SEMAPHORES))
+ #     define HAVE_POSIX_SEMAPHORES
+diff --git a/IlmBase/IlmThread/IlmThreadMutex.cpp b/IlmBase/IlmThread/IlmThreadMutex.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadMutex.cpp
++++ b/IlmBase/IlmThread/IlmThreadMutex.cpp
+@@ -42,7 +42,7 @@
+ #include "IlmBaseConfig.h"
+ 
+ #ifdef ILMBASE_FORCE_CXX03
+-#   if !defined(_WIN32) && !defined(_WIN64) && !(HAVE_PTHREAD)
++#   if !defined(_WIN32) && !defined(_WIN64) && !defined(HAVE_PTHREAD)
+ #      include "IlmThreadMutex.h"
+ 
+ ILMTHREAD_INTERNAL_NAMESPACE_SOURCE_ENTER
+diff --git a/IlmBase/IlmThread/IlmThreadMutex.h b/IlmBase/IlmThread/IlmThreadMutex.h
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadMutex.h
++++ b/IlmBase/IlmThread/IlmThreadMutex.h
+@@ -75,13 +75,14 @@
+ #endif
+ 
+ #ifdef ILMBASE_FORCE_CXX03
+-#   if (defined _WIN32 || defined _WIN64)
++#   if (defined(_WIN32) || defined(_WIN64))
+ #      ifdef NOMINMAX
+ #         undef NOMINMAX
+ #      endif
+ #      define NOMINMAX
+ #      include <windows.h>
+-#   elif HAVE_PTHREAD
++#   endif
++#   ifdef HAVE_PTHREAD
+ #      include <pthread.h>
+ #   endif
+ #else
+@@ -120,7 +121,7 @@ class ILMTHREAD_EXPORT Mutex
+     void lock () const;
+     void unlock () const;
+ 
+-    #if (defined _WIN32 || defined _WIN64)
++    #if (defined(_WIN32) || defined(_WIN64))
+     #elif HAVE_PTHREAD
+     mutable CRITICAL_SECTION _mutex;
+     mutable pthread_mutex_t _mutex;
+diff --git a/IlmBase/IlmThread/IlmThreadMutexPosix.cpp b/IlmBase/IlmThread/IlmThreadMutexPosix.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadMutexPosix.cpp
++++ b/IlmBase/IlmThread/IlmThreadMutexPosix.cpp
+@@ -46,7 +46,7 @@
+ #endif
+ 
+ #ifdef ILMBASE_FORCE_CXX03
+-#   if HAVE_PTHREAD
++#   ifdef HAVE_PTHREAD
+ 
+ #      include "IlmThreadMutex.h"
+ #      include "Iex.h"
+diff --git a/IlmBase/IlmThread/IlmThreadPool.cpp b/IlmBase/IlmThread/IlmThreadPool.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadPool.cpp
++++ b/IlmBase/IlmThread/IlmThreadPool.cpp
+@@ -507,7 +507,7 @@ TaskGroup::Data::addTask ()
+     // extra lock but for c++98, to add the ability for custom thread
+     // pool we add the lock here
+     //
+-#if ILMBASE_FORCE_CXX03
++#ifdef ILMBASE_FORCE_CXX03
+     Lock lock (dtorMutex);
+ #endif
+     if (numPending++ == 0)
+@@ -860,7 +860,7 @@ unsigned
+ ThreadPool::estimateThreadCountForFileIO ()
+ {
+ #ifdef ILMBASE_FORCE_CXX03
+-#    if defined(_WIN32)
++#    if (defined(_WIN32) || defined(_WIN64))
+     SYSTEM_INFO sysinfo;
+     GetSystemInfo (&sysinfo);
+     return static_cast<unsigned> (sysinfo.dwNumberOfProcessors);
+diff --git a/IlmBase/IlmThread/IlmThreadPosix.cpp b/IlmBase/IlmThread/IlmThreadPosix.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadPosix.cpp
++++ b/IlmBase/IlmThread/IlmThreadPosix.cpp
+@@ -45,7 +45,7 @@
+ #include <IlmThreadMinGWThread.h>
+ #endif
+ 
+-#if HAVE_PTHREAD
++#ifdef HAVE_PTHREAD
+ #ifdef ILMBASE_FORCE_CXX03
+ 
+ #include "IlmThread.h"
+diff --git a/IlmBase/IlmThread/IlmThreadSemaphore.cpp b/IlmBase/IlmThread/IlmThreadSemaphore.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadSemaphore.cpp
++++ b/IlmBase/IlmThread/IlmThreadSemaphore.cpp
+@@ -45,7 +45,7 @@
+ #include <IlmThreadMinGWThread.h>
+ #endif
+ 
+-#if !defined (_WIN32) && !(_WIN64) && !(HAVE_PTHREAD)
++#if (!defined(_WIN32) && !defined(_WIN64) && !defined(HAVE_PTHREAD))
+ #include "IlmThreadSemaphore.h"
+ 
+ ILMTHREAD_INTERNAL_NAMESPACE_SOURCE_ENTER
+diff --git a/IlmBase/IlmThread/IlmThreadSemaphore.h b/IlmBase/IlmThread/IlmThreadSemaphore.h
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadSemaphore.h
++++ b/IlmBase/IlmThread/IlmThreadSemaphore.h
+@@ -50,14 +50,14 @@
+ #include <IlmThreadMinGWThread.h>
+ #endif
+ 
+-#if (!(defined(_WIN32) || defined(_WIN64)) || defined(__MINGW64_VERSION_MAJOR))
+-#   if defined(HAVE_POSIX_SEMAPHORES)
++#if ((!defined(_WIN32) && !defined(_WIN64)) || defined(__MINGW64_VERSION_MAJOR))
++#   ifdef HAVE_POSIX_SEMAPHORES
+ #       include <semaphore.h>
+ #   elif defined(__APPLE__)
+ #       include <dispatch/dispatch.h>
+ #   else
+ #       ifdef ILMBASE_FORCE_CXX03
+-#           if HAVE_PTHREAD
++#           ifdef HAVE_PTHREAD
+ #               include <pthread.h>
+ #           endif
+ #       else
+@@ -84,7 +84,7 @@ class ILMTHREAD_EXPORT Semaphore
+ 
+   private:
+ 
+-#if ((defined _WIN32 || defined _WIN64) && !defined(HAVE_POSIX_SEMAPHORES))
++#if ((defined(_WIN32) || defined(_WIN64)) && !defined(HAVE_POSIX_SEMAPHORES))
+ 
+     mutable HANDLE _semaphore;
+ 
+@@ -105,8 +105,8 @@ class ILMTHREAD_EXPORT Semaphore
+     {
+         unsigned int count;
+         unsigned long numWaiting;
+-#   if ILMBASE_FORCE_CXX03
+-#      if HAVE_PTHREAD
++#   ifdef ILMBASE_FORCE_CXX03
++#      ifdef HAVE_PTHREAD
+         pthread_mutex_t mutex;
+         pthread_cond_t nonZero;
+ #      else
+diff --git a/IlmBase/IlmThread/IlmThreadSemaphoreOSX.cpp b/IlmBase/IlmThread/IlmThreadSemaphoreOSX.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadSemaphoreOSX.cpp
++++ b/IlmBase/IlmThread/IlmThreadSemaphoreOSX.cpp
+@@ -39,7 +39,7 @@
+ //
+ //-----------------------------------------------------------------------------
+ 
+-#if defined(__APPLE__)
++#ifdef __APPLE__
+ 
+ #include "IlmThreadSemaphore.h"
+ #include "Iex.h"
+diff --git a/IlmBase/IlmThread/IlmThreadSemaphorePosix.cpp b/IlmBase/IlmThread/IlmThreadSemaphorePosix.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadSemaphorePosix.cpp
++++ b/IlmBase/IlmThread/IlmThreadSemaphorePosix.cpp
+@@ -45,7 +45,7 @@
+ #include <IlmThreadMinGWThread.h>
+ #endif
+ 
+-#if HAVE_PTHREAD && HAVE_POSIX_SEMAPHORES
++#if defined(HAVE_PTHREAD) && defined(HAVE_POSIX_SEMAPHORES)
+ 
+ #include "IlmThreadSemaphore.h"
+ #include "Iex.h"
+diff --git a/IlmBase/IlmThread/IlmThreadSemaphorePosixCompat.cpp b/IlmBase/IlmThread/IlmThreadSemaphorePosixCompat.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadSemaphorePosixCompat.cpp
++++ b/IlmBase/IlmThread/IlmThreadSemaphorePosixCompat.cpp
+@@ -45,7 +45,8 @@
+ #include <IlmThreadMinGWThread.h>
+ #endif
+ 
+-#if (!defined(HAVE_POSIX_SEMAPHORES)) && (!defined (_WIN32) && !defined (_WIN64) || defined(__MINGW64_VERSION_MAJOR)) && !defined (__APPLE__)
++#if (!defined(HAVE_POSIX_SEMAPHORES) && !defined(__APPLE__))
++#if ((!defined(_WIN32) && !defined(_WIN64)) || defined(__MINGW64_VERSION_MAJOR))
+ 
+ #include "IlmThreadSemaphore.h"
+ #include "Iex.h"
+@@ -53,7 +54,7 @@
+ 
+ ILMTHREAD_INTERNAL_NAMESPACE_SOURCE_ENTER
+ 
+-#if ILMBASE_FORCE_CXX03 && HAVE_PTHREAD
++#if (defined(ILMBASE_FORCE_CXX03) && defined(HAVE_PTHREAD))
+ Semaphore::Semaphore (unsigned int value)
+ {
+     if (int error = ::pthread_mutex_init (&_semaphore.mutex, 0))
+@@ -227,4 +228,5 @@ Semaphore::value () const
+ 
+ ILMTHREAD_INTERNAL_NAMESPACE_SOURCE_EXIT
+ 
+-#endif
++#endif // _WIN32
++#endif // HAVE_POSIX_SEMAPHORES
+diff --git a/IlmBase/IlmThread/IlmThreadSemaphoreWin32.cpp b/IlmBase/IlmThread/IlmThreadSemaphoreWin32.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadSemaphoreWin32.cpp
++++ b/IlmBase/IlmThread/IlmThreadSemaphoreWin32.cpp
+@@ -41,7 +41,7 @@
+ #include <IlmThreadMinGWThread.h>
+ #endif
+ 
+-#if (defined _WIN32 || defined _WIN64) && !defined(HAVE_POSIX_SEMAPHORES)
++#if (defined(_WIN32) || defined(_WIN64)) && !defined(HAVE_POSIX_SEMAPHORES)
+ 
+ #include "IlmThreadSemaphore.h"
+ #include "Iex.h"
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Gregorio Litenstein <g.litenstein@gmail.com>
+Date: Tue, 22 Oct 2019 09:03:25 -0300
+Subject: [PATCH 5/9] Fix autoconf and CMake tests for semaphores.
+
+This should eliminate the need for IlmThreadMinGWThread.h entirely.
+
+diff --git a/IlmBase/config/CMakeLists.txt b/IlmBase/config/CMakeLists.txt
+index 1111111..2222222 100644
+--- a/IlmBase/config/CMakeLists.txt
++++ b/IlmBase/config/CMakeLists.txt
+@@ -29,9 +29,9 @@ if(Threads_FOUND)
+ 
+   # we have threads, but do we have posix semaphores for sem_init?
+   # should be in pthreads
+-  if(NOT (APPLE OR (WIN32 AND NOT MINGW)))
++  if(NOT (APPLE OR (WIN32 AND (NOT MINGW))))
+     if(MINGW)
+-      check_include_files(pthread_unistd.h ILMBASE_HAVE_SEMAPHORE_H)
++      check_include_files("pthread_unistd.h;semaphore.h" ILMBASE_HAVE_SEMAPHORE_H)
+     else()
+       check_include_files(semaphore.h ILMBASE_HAVE_SEMAPHORE_H)
+     endif()
+diff --git a/IlmBase/m4/threads.m4 b/IlmBase/m4/threads.m4
+index 1111111..2222222 100644
+--- a/IlmBase/m4/threads.m4
++++ b/IlmBase/m4/threads.m4
+@@ -258,25 +258,46 @@ if test "${enable_posix_sem:-yes}" != "no"; then
+     AC_CHECK_HEADERS([semaphore.h], [
+ 	AC_SEARCH_LIBS(sem_init, [posix4 pthread], [
+ 	    AC_MSG_CHECKING([whether to use POSIX unnamed semaphores])
+-	    AC_RUN_IFELSE([
+-		AC_LANG_PROGRAM([#include <semaphore.h>], [
+-		    sem_t mysem;
+-		    if (sem_init (&mysem, 1, 1) == 0)
+-		    {
+-			if (sem_wait (&mysem) == 0)
+-			{
+-			    sem_post (&mysem);
+-			    sem_destroy (&mysem);
+-			    return 0;
+-			}
+-		    }
+-		    return 1;
+-		])
+-		], [
+-		AC_MSG_RESULT([yes])
+-		am_posix_sem_ok=yes], [
+-		AC_MSG_RESULT([no (pshared not usable)])], [
+-		AC_MSG_RESULT([no (cannot check usability when cross compiling)])])
++		if test "${cross_compiling}" == "yes"; then
++			AC_LINK_IFELSE([
++			AC_LANG_PROGRAM([#include <semaphore.h>], [
++				sem_t mysem;
++				if (sem_init (&mysem, 1, 1) == 0)
++				{
++				if (sem_wait (&mysem) == 0)
++				{
++					sem_post (&mysem);
++					sem_destroy (&mysem);
++					return 0;
++				}
++				}
++				return 1;
++			])
++			], [
++			AC_MSG_RESULT([yes])
++			am_posix_sem_ok=yes], [
++			AC_MSG_RESULT([no (pshared not usable)])])
++		else
++			AC_RUN_IFELSE([
++			AC_LANG_PROGRAM([#include <semaphore.h>], [
++				sem_t mysem;
++				if (sem_init (&mysem, 1, 1) == 0)
++				{
++				if (sem_wait (&mysem) == 0)
++				{
++					sem_post (&mysem);
++					sem_destroy (&mysem);
++					return 0;
++				}
++				}
++				return 1;
++			])
++			], [
++			AC_MSG_RESULT([yes])
++			am_posix_sem_ok=yes], [
++			AC_MSG_RESULT([no (pshared not usable)])], [
++			AC_MSG_RESULT([no (we're cross-compiling, and this test should have only tried to link, not run.))])])
++		fi
+ 	])
+     ])
+ fi
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Gregorio Litenstein <g.litenstein@gmail.com>
+Date: Tue, 22 Oct 2019 15:05:06 -0300
+Subject: [PATCH 6/9] Remove IlmThreadMinGWThread.h
+
+
+diff --git a/IlmBase/IlmThread/CMakeLists.txt b/IlmBase/IlmThread/CMakeLists.txt
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/CMakeLists.txt
++++ b/IlmBase/IlmThread/CMakeLists.txt
+@@ -21,7 +21,6 @@ ilmbase_define_library(IlmThread
+     IlmThreadPool.h
+     IlmThread.h
+     IlmThreadSemaphore.h
+-    IlmThreadMinGWThread.h
+     IlmThreadMutex.h
+     IlmThreadNamespace.h
+     IlmThreadExport.h
+diff --git a/IlmBase/IlmThread/IlmThread.h b/IlmBase/IlmThread/IlmThread.h
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThread.h
++++ b/IlmBase/IlmThread/IlmThread.h
+@@ -94,10 +94,6 @@
+ #include "IlmThreadExport.h"
+ #include "IlmThreadNamespace.h"
+ 
+-#if (defined(_WIN32) || defined(_WIN64))
+-#include <IlmThreadMinGWThread.h>
+-#endif
+-
+ #ifdef ILMBASE_FORCE_CXX03
+ #   if ((defined(_WIN32) || defined(_WIN64)) && !defined(HAVE_PTHREAD))
+ #     ifdef NOMINMAX
+diff --git a/IlmBase/IlmThread/IlmThreadMinGWThread.h b/IlmBase/IlmThread/IlmThreadMinGWThread.h
+deleted file mode 100644
+index 0afa62e..0000000
+--- a/IlmBase/IlmThread/IlmThreadMinGWThread.h
++++ /dev/null
+@@ -1,63 +0,0 @@
+-///////////////////////////////////////////////////////////////////////////
+-//
+-// Copyright (c) 2005-2012, Industrial Light & Magic, a division of Lucas
+-// Digital Ltd. LLC
+-// 
+-// All rights reserved.
+-// 
+-// Redistribution and use in source and binary forms, with or without
+-// modification, are permitted provided that the following conditions are
+-// met:
+-// *       Redistributions of source code must retain the above copyright
+-// notice, this list of conditions and the following disclaimer.
+-// *       Redistributions in binary form must reproduce the above
+-// copyright notice, this list of conditions and the following disclaimer
+-// in the documentation and/or other materials provided with the
+-// distribution.
+-// *       Neither the name of Industrial Light & Magic nor the names of
+-// its contributors may be used to endorse or promote products derived
+-// from this software without specific prior written permission. 
+-// 
+-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+-//
+-///////////////////////////////////////////////////////////////////////////
+-
+-#ifndef INCLUDED_ILM_THREAD_MINGW_THREAD_H
+-#define INCLUDED_ILM_THREAD_MINGW_THREAD_H
+-
+-//-----------------------------------------------------------------------------
+-//
+-//  This file is just some boilerplate to ensure macros are correctly defined
+-//  in order to compile against MinGW-W64's implementation of posix threads
+-//  and semaphores.
+-//
+-//-----------------------------------------------------------------------------
+-
+-#if defined(_WIN32) || defined(_WIN64)
+-# ifdef NOMINMAX
+-#   undef NOMINMAX
+-# endif
+-# define NOMINMAX
+-# include <windows.h>
+-# ifdef __MINGW64_VERSION_MAJOR
+-#   include <pthread_unistd.h>
+-#   if (defined(_POSIX_SEMAPHORES) && !defined(HAVE_POSIX_SEMAPHORES))
+-#     define HAVE_POSIX_SEMAPHORES
+-#   endif
+-#   if (defined(_POSIX_THREADS) && !defined(HAVE_PTHREAD))
+-#     define HAVE_PTHREAD
+-#   endif
+-# endif
+-#endif
+-
+-#endif // INCLUDED_ILM_THREAD_MINGW_THREAD_H
+\ No newline at end of file
+diff --git a/IlmBase/IlmThread/IlmThreadMutex.h b/IlmBase/IlmThread/IlmThreadMutex.h
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadMutex.h
++++ b/IlmBase/IlmThread/IlmThreadMutex.h
+@@ -70,10 +70,6 @@
+ #include "IlmBaseConfig.h"
+ #include "IlmThreadNamespace.h"
+ 
+-#if (defined(_WIN32) || defined(_WIN64))
+-#include <IlmThreadMinGWThread.h>
+-#endif
+-
+ #ifdef ILMBASE_FORCE_CXX03
+ #   if (defined(_WIN32) || defined(_WIN64))
+ #      ifdef NOMINMAX
+diff --git a/IlmBase/IlmThread/IlmThreadMutexPosix.cpp b/IlmBase/IlmThread/IlmThreadMutexPosix.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadMutexPosix.cpp
++++ b/IlmBase/IlmThread/IlmThreadMutexPosix.cpp
+@@ -41,10 +41,6 @@
+ 
+ #include "IlmBaseConfig.h"
+ 
+-#if (defined(_WIN32) || defined(_WIN64))
+-#include <IlmThreadMinGWThread.h>
+-#endif
+-
+ #ifdef ILMBASE_FORCE_CXX03
+ #   ifdef HAVE_PTHREAD
+ 
+diff --git a/IlmBase/IlmThread/IlmThreadMutexWin32.cpp b/IlmBase/IlmThread/IlmThreadMutexWin32.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadMutexWin32.cpp
++++ b/IlmBase/IlmThread/IlmThreadMutexWin32.cpp
+@@ -40,10 +40,6 @@
+ 
+ #include "IlmBaseConfig.h"
+ 
+-#if (defined(_WIN32) || defined(_WIN64))
+-#include <IlmThreadMinGWThread.h>
+-#endif
+-
+ #ifdef ILMBASE_FORCE_CXX03
+ #    if ((defined _WIN32 || defined _WIN64) && !defined(__MINGW64_VERSION_MAJOR))
+ #        include "IlmThreadMutex.h"
+diff --git a/IlmBase/IlmThread/IlmThreadPosix.cpp b/IlmBase/IlmThread/IlmThreadPosix.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadPosix.cpp
++++ b/IlmBase/IlmThread/IlmThreadPosix.cpp
+@@ -41,10 +41,6 @@
+ 
+ #include "IlmBaseConfig.h"
+ 
+-#if (defined(_WIN32) || defined(_WIN64))
+-#include <IlmThreadMinGWThread.h>
+-#endif
+-
+ #ifdef HAVE_PTHREAD
+ #ifdef ILMBASE_FORCE_CXX03
+ 
+diff --git a/IlmBase/IlmThread/IlmThreadSemaphore.cpp b/IlmBase/IlmThread/IlmThreadSemaphore.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadSemaphore.cpp
++++ b/IlmBase/IlmThread/IlmThreadSemaphore.cpp
+@@ -41,10 +41,6 @@
+ 
+ #include "IlmBaseConfig.h"
+ 
+-#if (defined(_WIN32) || defined(_WIN64))
+-#include <IlmThreadMinGWThread.h>
+-#endif
+-
+ #if (!defined(_WIN32) && !defined(_WIN64) && !defined(HAVE_PTHREAD))
+ #include "IlmThreadSemaphore.h"
+ 
+diff --git a/IlmBase/IlmThread/IlmThreadSemaphore.h b/IlmBase/IlmThread/IlmThreadSemaphore.h
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadSemaphore.h
++++ b/IlmBase/IlmThread/IlmThreadSemaphore.h
+@@ -47,24 +47,26 @@
+ #include "IlmThreadNamespace.h"
+ 
+ #if (defined(_WIN32) || defined(_WIN64))
+-#include <IlmThreadMinGWThread.h>
++#   ifdef NOMINMAX
++#      undef NOMINMAX
++#   endif
++#   define NOMINMAX
++#   include <windows.h>
+ #endif
+ 
+-#if ((!defined(_WIN32) && !defined(_WIN64)) || defined(__MINGW64_VERSION_MAJOR))
+-#   ifdef HAVE_POSIX_SEMAPHORES
+-#       include <semaphore.h>
+-#   elif defined(__APPLE__)
+-#       include <dispatch/dispatch.h>
+-#   else
+-#       ifdef ILMBASE_FORCE_CXX03
+-#           ifdef HAVE_PTHREAD
+-#               include <pthread.h>
+-#           endif
+-#       else
+-#           include <mutex>
+-#           include <condition_variable>
+-#       endif
+-#   endif
++#ifdef HAVE_POSIX_SEMAPHORES
++#  include <semaphore.h>
++#elif defined(__APPLE__)
++#  include <dispatch/dispatch.h>
++#else
++#  ifdef ILMBASE_FORCE_CXX03
++#    ifdef HAVE_PTHREAD
++#      include <pthread.h>
++#    endif
++#  else
++#    include <mutex>
++#    include <condition_variable>
++#  endif
+ #endif
+ 
+ ILMTHREAD_INTERNAL_NAMESPACE_HEADER_ENTER
+diff --git a/IlmBase/IlmThread/IlmThreadSemaphorePosix.cpp b/IlmBase/IlmThread/IlmThreadSemaphorePosix.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadSemaphorePosix.cpp
++++ b/IlmBase/IlmThread/IlmThreadSemaphorePosix.cpp
+@@ -41,10 +41,6 @@
+ 
+ #include "IlmBaseConfig.h"
+ 
+-#if (defined(_WIN32) || defined(_WIN64))
+-#include <IlmThreadMinGWThread.h>
+-#endif
+-
+ #if defined(HAVE_PTHREAD) && defined(HAVE_POSIX_SEMAPHORES)
+ 
+ #include "IlmThreadSemaphore.h"
+diff --git a/IlmBase/IlmThread/IlmThreadSemaphorePosixCompat.cpp b/IlmBase/IlmThread/IlmThreadSemaphorePosixCompat.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadSemaphorePosixCompat.cpp
++++ b/IlmBase/IlmThread/IlmThreadSemaphorePosixCompat.cpp
+@@ -40,15 +40,11 @@
+ //-----------------------------------------------------------------------------
+ 
+ #include "IlmBaseConfig.h"
+-
+-#if (defined(_WIN32) || defined(_WIN64))
+-#include <IlmThreadMinGWThread.h>
+-#endif
++#include "IlmThreadSemaphore.h" // We need to have windows.h before checking for __MINGW64_VERSION_MAJOR
+ 
+ #if (!defined(HAVE_POSIX_SEMAPHORES) && !defined(__APPLE__))
+ #if ((!defined(_WIN32) && !defined(_WIN64)) || defined(__MINGW64_VERSION_MAJOR))
+ 
+-#include "IlmThreadSemaphore.h"
+ #include "Iex.h"
+ #include <assert.h>
+ 
+diff --git a/IlmBase/IlmThread/IlmThreadSemaphoreWin32.cpp b/IlmBase/IlmThread/IlmThreadSemaphoreWin32.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadSemaphoreWin32.cpp
++++ b/IlmBase/IlmThread/IlmThreadSemaphoreWin32.cpp
+@@ -37,9 +37,8 @@
+ //  class Semaphore -- implementation for Windows
+ //
+ //-----------------------------------------------------------------------------
+-#if (defined(_WIN32) || defined(_WIN64))
+-#include <IlmThreadMinGWThread.h>
+-#endif
++
++#include "IlmBaseConfig.h"
+ 
+ #if (defined(_WIN32) || defined(_WIN64)) && !defined(HAVE_POSIX_SEMAPHORES)
+ 
+diff --git a/IlmBase/IlmThread/IlmThreadWin32.cpp b/IlmBase/IlmThread/IlmThreadWin32.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadWin32.cpp
++++ b/IlmBase/IlmThread/IlmThreadWin32.cpp
+@@ -38,7 +38,6 @@
+ //
+ //-----------------------------------------------------------------------------
+ 
+-
+ #include "IlmBaseConfig.h"
+ 
+ #ifdef ILMBASE_FORCE_CXX03
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Gregorio Litenstein <g.litenstein@gmail.com>
+Date: Sat, 9 Nov 2019 19:12:31 -0300
+Subject: [PATCH 7/9] =?UTF-8?q?Add=20@kleisauke=E2=80=99s=20fixes=20for=20?=
+ =?UTF-8?q?building=20without=20c++11?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+
+diff --git a/IlmBase/IlmThread/IlmThreadMutex.h b/IlmBase/IlmThread/IlmThreadMutex.h
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadMutex.h
++++ b/IlmBase/IlmThread/IlmThreadMutex.h
+@@ -117,9 +117,9 @@ class ILMTHREAD_EXPORT Mutex
+     void lock () const;
+     void unlock () const;
+ 
+-    #if (defined(_WIN32) || defined(_WIN64))
+-    #elif HAVE_PTHREAD
++    #if (defined(_WIN32) || defined(_WIN64)) && !defined(HAVE_PTHREAD)
+     mutable CRITICAL_SECTION _mutex;
++    #elif HAVE_PTHREAD
+     mutable pthread_mutex_t _mutex;
+     #endif
+ 
+diff --git a/IlmBase/IlmThread/IlmThreadMutexWin32.cpp b/IlmBase/IlmThread/IlmThreadMutexWin32.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadMutexWin32.cpp
++++ b/IlmBase/IlmThread/IlmThreadMutexWin32.cpp
+@@ -39,10 +39,10 @@
+ //-----------------------------------------------------------------------------
+ 
+ #include "IlmBaseConfig.h"
++#include "IlmThreadMutex.h" // We will need windows.h to know whether __MINGW64_VERSION_MAJOR is defined or not.
+ 
+ #ifdef ILMBASE_FORCE_CXX03
+ #    if ((defined _WIN32 || defined _WIN64) && !defined(__MINGW64_VERSION_MAJOR))
+-#        include "IlmThreadMutex.h"
+ #        include "Iex.h"
+ 
+ ILMTHREAD_INTERNAL_NAMESPACE_SOURCE_ENTER
+diff --git a/IlmBase/IlmThread/IlmThreadPool.cpp b/IlmBase/IlmThread/IlmThreadPool.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadPool.cpp
++++ b/IlmBase/IlmThread/IlmThreadPool.cpp
+@@ -67,9 +67,9 @@ struct TaskGroup::Data
+      Data ();
+     ~Data ();
+     
+-#ifndef ILMBASE_FORCE_CXX03
+     void addTask () ;
+     void removeTask ();
++#ifndef ILMBASE_FORCE_CXX03
+     std::atomic<int> numPending;
+ #else
+     int numPending;     // number of pending tasks to still execute
+diff --git a/IlmBase/IlmThread/IlmThreadWin32.cpp b/IlmBase/IlmThread/IlmThreadWin32.cpp
+index 1111111..2222222 100644
+--- a/IlmBase/IlmThread/IlmThreadWin32.cpp
++++ b/IlmBase/IlmThread/IlmThreadWin32.cpp
+@@ -39,11 +39,11 @@
+ //-----------------------------------------------------------------------------
+ 
+ #include "IlmBaseConfig.h"
++#include "IlmThread.h" // We will need windows.h to know whether __MINGW64_VERSION_MAJOR is defined or not.
+ 
+ #ifdef ILMBASE_FORCE_CXX03
+ #if ((defined _WIN32 || defined _WIN64) && !defined(__MINGW64_VERSION_MAJOR))
+ 
+-#include "IlmThread.h"
+ #include "Iex.h"
+ #include <iostream>
+ #include <assert.h>
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Gregorio Litenstein <g.litenstein@gmail.com>
+Date: Fri, 11 Oct 2019 22:18:02 -0300
+Subject: [PATCH 8/9] Check for eLut.h and toFloat.h before making them
+
+
+diff --git a/IlmBase/Half/CMakeLists.txt b/IlmBase/Half/CMakeLists.txt
+index 1111111..2222222 100644
+--- a/IlmBase/Half/CMakeLists.txt
++++ b/IlmBase/Half/CMakeLists.txt
+@@ -1,21 +1,44 @@
+ # SPDX-License-Identifier: BSD-3-Clause
+ # Copyright Contributors to the OpenEXR Project.
+ 
+-add_executable(eLut eLut.cpp)
+-target_compile_features(eLut PUBLIC cxx_std_${OPENEXR_CXX_STANDARD})
++check_include_files(${CMAKE_CURRENT_BINARY_DIR}/eLut.h HAVE_ELUT_H)
++check_include_files(${CMAKE_CURRENT_BINARY_DIR}/toFloat.h HAVE_TOFLOAT_H)
+ 
+-
+-add_executable(toFloat toFloat.cpp)
+-target_compile_features(toFloat PUBLIC cxx_std_${OPENEXR_CXX_STANDARD})
+-
+-add_custom_command(
+-  OUTPUT
+-    ${CMAKE_CURRENT_BINARY_DIR}/toFloat.h
+-    ${CMAKE_CURRENT_BINARY_DIR}/eLut.h
+-  COMMAND $<TARGET_FILE:toFloat> ARGS > ${CMAKE_CURRENT_BINARY_DIR}/toFloat.h
+-  COMMAND $<TARGET_FILE:eLut> ARGS > ${CMAKE_CURRENT_BINARY_DIR}/eLut.h
+-  DEPENDS eLut toFloat
+-)
++if((NOT HAVE_ELUT_H) OR (NOT HAVE_TOFLOAT_H))
++  if(CMAKE_CROSSCOMPILING)
++    message(STATUS "We're cross-compiling; will use native executables from a previous build to generate toFloat.h and eLut.h")
++    set(NATIVE_ILMBASE_BUILD_DIR "NATIVE_ILMBASE-NOTFOUND" CACHE FILEPATH "Point it to the build folder of a native build.")
++    if (NATIVE_ILMBASE_BUILD_DIR)
++      set (toFloat_PATH "${NATIVE_ILMBASE_BUILD_DIR}/bin/toFloat")
++      set (eLut_PATH "${NATIVE_ILMBASE_BUILD_DIR}/bin/eLut")
++    else()
++      message(FATAL_ERROR "Missing path to native build directory.")
++    endif()
++   else()
++    add_executable(eLut eLut.cpp)
++    target_compile_features(eLut PUBLIC cxx_std_${OPENEXR_CXX_STANDARD})
++    set_target_properties(eLut PROPERTIES
++      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
++    )
++    
++    add_executable(toFloat toFloat.cpp)
++    target_compile_features(toFloat PUBLIC cxx_std_${OPENEXR_CXX_STANDARD})
++    set_target_properties(toFloat PROPERTIES
++      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
++    )
++    set (toFloat_PATH "$<TARGET_FILE:toFloat>")
++    set (eLut_PATH "$<TARGET_FILE:eLut>")
++   endif()
++    add_custom_command(
++      OUTPUT
++        ${CMAKE_CURRENT_BINARY_DIR}/toFloat.h
++        ${CMAKE_CURRENT_BINARY_DIR}/eLut.h
++      COMMAND "${toFloat_PATH}" ARGS > "${CMAKE_CURRENT_BINARY_DIR}/toFloat.h"
++      COMMAND "${eLut_PATH}" ARGS > "${CMAKE_CURRENT_BINARY_DIR}/eLut.h"
++      DEPENDS $<$<NOT:$<BOOL:${CMAKE_CROSSCOMPILING}>>:eLut>
++      DEPENDS $<$<NOT:$<BOOL:${CMAKE_CROSSCOMPILING}>>:toFloat>
++    )
++endif()
+ 
+ ### Now define the real library
+ 
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Gregorio Litenstein <g.litenstein@gmail.com>
 Date: Wed, 16 Oct 2019 22:17:21 -0300
-Subject: [PATCH 3/4] Check for b44ExpLogTable and dwaLookups
+Subject: [PATCH 9/9] Check for b44ExpLogTable and dwaLookups
 
 Also, make cross-building slightly easier.
 
@@ -588,68 +1959,3 @@ index 1111111..2222222 100644
  
  openexr_define_library(IlmImf
    PRIV_EXPORT ILMIMF_EXPORTS
-
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Gregorio Litenstein <g.litenstein@gmail.com>
-Date: Sat, 19 Oct 2019 12:01:05 -0300
-Subject: [PATCH 4/4] Fix symlink creation on windows.
-
-
-diff --git a/IlmBase/config/LibraryDefine.cmake b/IlmBase/config/LibraryDefine.cmake
-index 1111111..2222222 100644
---- a/IlmBase/config/LibraryDefine.cmake
-+++ b/IlmBase/config/LibraryDefine.cmake
-@@ -98,12 +98,20 @@ function(ILMBASE_DEFINE_LIBRARY libname)
-       DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${ILMBASE_OUTPUT_SUBDIR}
-   )
-   if(BUILD_SHARED_LIBS AND (NOT "${ILMBASE_LIB_SUFFIX}" STREQUAL ""))
--    set(verlibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname}${ILMBASE_LIB_SUFFIX}${CMAKE_SHARED_LIBRARY_SUFFIX})
--    set(baselibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname}${CMAKE_SHARED_LIBRARY_SUFFIX})
--    install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_INSTALL_FULL_LIBDIR} ${CMAKE_COMMAND} -E create_symlink ${verlibname} ${baselibname})")
--    install(CODE "message(\"-- Creating symlink in ${CMAKE_INSTALL_FULL_LIBDIR} ${baselibname} -> ${verlibname}\")")
-+    set(verlibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname}${ILMBASE_LIB_SUFFIX})
-+    set(baselibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname})
-+    if (WIN32)
-+      set(fullinstallpath "${CMAKE_INSTALL_FULL_BINDIR}")
-+      install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_INSTALL_FULL_LIBDIR} ${CMAKE_COMMAND} -E create_symlink ${verlibname}${CMAKE_IMPORT_LIBRARY_SUFFIX} ${baselibname}${CMAKE_IMPORT_LIBRARY_SUFFIX})")
-+      install(CODE "message(\"-- Creating symlink in ${CMAKE_INSTALL_FULL_LIBDIR} ${baselibname}${CMAKE_IMPORT_LIBRARY_SUFFIX} -> ${verlibname}${CMAKE_IMPORT_LIBRARY_SUFFIX}\")")
-+    else()
-+      set(fullinstallpath "${CMAKE_INSTALL_FULL_LIBDIR}")
-+    endif()
-+    install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E chdir ${fullinstallpath} ${CMAKE_COMMAND} -E create_symlink ${verlibname}${CMAKE_SHARED_LIBRARY_SUFFIX} ${baselibname}${CMAKE_SHARED_LIBRARY_SUFFIX})")
-+    install(CODE "message(\"-- Creating symlink in ${fullinstallpath} ${baselibname}${CMAKE_SHARED_LIBRARY_SUFFIX} -> ${verlibname}${CMAKE_SHARED_LIBRARY_SUFFIX}\")")
-     set(verlibname)
-     set(baselibname)
-+    set(fullinstallpath)
-   endif()
- 
-   if(ILMBASE_BUILD_BOTH_STATIC_SHARED)
-diff --git a/OpenEXR/config/LibraryDefine.cmake b/OpenEXR/config/LibraryDefine.cmake
-index 1111111..2222222 100644
---- a/OpenEXR/config/LibraryDefine.cmake
-+++ b/OpenEXR/config/LibraryDefine.cmake
-@@ -92,12 +92,20 @@ function(OPENEXR_DEFINE_LIBRARY libname)
-       DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${OPENEXR_OUTPUT_SUBDIR}
-   )
-   if(BUILD_SHARED_LIBS AND (NOT "${OPENEXR_LIB_SUFFIX}" STREQUAL ""))
--    set(verlibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname}${OPENEXR_LIB_SUFFIX}${CMAKE_SHARED_LIBRARY_SUFFIX})
--    set(baselibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname}${CMAKE_SHARED_LIBRARY_SUFFIX})
--    install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_INSTALL_FULL_LIBDIR} ${CMAKE_COMMAND} -E create_symlink ${verlibname} ${baselibname})")
--    install(CODE "message(\"-- Creating symlink in ${CMAKE_INSTALL_FULL_LIBDIR} ${baselibname} -> ${verlibname}\")")
-+    set(verlibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname}${OPENEXR_LIB_SUFFIX})
-+    set(baselibname ${CMAKE_SHARED_LIBRARY_PREFIX}${libname})
-+    if (WIN32)
-+      set(fullinstallpath "${CMAKE_INSTALL_FULL_BINDIR}")
-+      install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_INSTALL_FULL_LIBDIR} ${CMAKE_COMMAND} -E create_symlink ${verlibname}${CMAKE_IMPORT_LIBRARY_SUFFIX} ${baselibname}${CMAKE_IMPORT_LIBRARY_SUFFIX})")
-+      install(CODE "message(\"-- Creating symlink in ${CMAKE_INSTALL_FULL_LIBDIR} ${baselibname}${CMAKE_IMPORT_LIBRARY_SUFFIX} -> ${verlibname}${CMAKE_IMPORT_LIBRARY_SUFFIX}\")")
-+    else()
-+      set(fullinstallpath "${CMAKE_INSTALL_FULL_LIBDIR}")
-+    endif()
-+    install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E chdir ${fullinstallpath} ${CMAKE_COMMAND} -E create_symlink ${verlibname}${CMAKE_SHARED_LIBRARY_SUFFIX} ${baselibname}${CMAKE_SHARED_LIBRARY_SUFFIX})")
-+    install(CODE "message(\"-- Creating symlink in ${fullinstallpath} ${baselibname}${CMAKE_SHARED_LIBRARY_SUFFIX} -> ${verlibname}${CMAKE_SHARED_LIBRARY_SUFFIX}\")")
-     set(verlibname)
-     set(baselibname)
-+    set(fullinstallpath)
-   endif()
- 
-   if(OPENEXR_BUILD_BOTH_STATIC_SHARED)
