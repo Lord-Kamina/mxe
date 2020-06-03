@@ -1,0 +1,121 @@
+From 4cec0d1cc47fcf3dd71fded3678282981d5d4f74 Mon Sep 17 00:00:00 2001
+From: MXE
+Date: Tue, 30 Jun 2015 21:25:55 -0400
+Subject: [PATCH 1/2] pa_win_wasapi: Fix compilation on mingw-w64
+
+diff --git a/configure.in b/configure.in
+index 3f3b31e..dc84918 100644
+--- a/configure.in
++++ b/configure.in
+@@ -337,7 +337,7 @@ case "${host_os}" in
+             add_objects src/hostapi/wasapi/pa_win_wasapi.o src/common/pa_ringbuffer.o src/os/win/pa_win_hostapis.o src/os/win/pa_win_util.o src/os/win/pa_win_coinitialize.o src/os/win/pa_win_waveformat.o
+             LIBS="${LIBS} -lwinmm -lm -lole32 -luuid"
+             DLL_LIBS="${DLL_LIBS} -lwinmm -lole32"
+-            CFLAGS="$CFLAGS -I\$(top_srcdir)/src/hostapi/wasapi/mingw-include -UPA_USE_WASAPI -DPA_USE_WASAPI=1"
++            CFLAGS="$CFLAGS -UPA_USE_WASAPI -DPA_USE_WASAPI=1"
+         fi
+         ;;
+    
+diff --git a/src/hostapi/wasapi/pa_win_wasapi.c b/src/hostapi/wasapi/pa_win_wasapi.c
+index d1d0278..f2dfdf0 100644
+--- a/src/hostapi/wasapi/pa_win_wasapi.c
++++ b/src/hostapi/wasapi/pa_win_wasapi.c
+@@ -61,14 +61,15 @@
+ 
+ // WASAPI
+ #include <mmreg.h>  // must be before other Wasapi headers
+-#if defined(_MSC_VER) && (_MSC_VER >= 1400)
+-	#include <Avrt.h>
++#if defined(_MSC_VER) && (_MSC_VER >= 1400) || defined(__MINGW64_VERSION_MAJOR)
++	#include <avrt.h>
+ 	#define COBJMACROS
+-	#include <Audioclient.h>
++	#include <audioclient.h>
+ 	#include <endpointvolume.h>
+ 	#define INITGUID // Avoid additional linkage of static libs, excessive code will be optimized out by the compiler
+-	#include <mmdeviceapi.h>
++	#include <functiondiscoverykeys_devpkey.h>
+ 	#include <functiondiscoverykeys.h>
++	#include <mmdeviceapi.h>
+     #include <devicetopology.h>	// Used to get IKsJackDescription interface
+ 	#undef INITGUID
+ #endif
+@@ -1025,8 +1026,8 @@ static EWindowsVersion GetWindowsVersion()
+ 				{
+ 				case 0:  version = WINDOWS_VISTA_SERVER2008;	break;
+ 				case 1:	 version = WINDOWS_7_SERVER2008R2;		break;
+-				case 2:	 version = WINDOWS_8_SERVER2012;  		break;
+-				case 3:	 version = WINDOWS_8_1_SERVER2012R2;	break;
++				case 2:	 version = WINDOWS_10_SERVER2016;		break;
++				case 3:	 version = WINDOWS_10_SERVER2016;		break;
+ 				default: version = WINDOWS_FUTURE;				break;
+ 				}
+ 				break;
+@@ -1626,7 +1627,7 @@ static PaError CreateDeviceList(PaWasapiHostApiRepresentation *paWasapi, PaHostA
+                         goto error;
+                     }
+ 					if (value.pwszVal)
+-						WideCharToMultiByte(CP_UTF8, 0, value.pwszVal, (int)wcslen(value.pwszVal), (char *)deviceInfo->name, MAX_STR_LEN - 1, 0, 0);
++						WideCharToMultiByte((GetACP() == 65001) ? CP_UTF8 : CP_ACP, 0, value.pwszVal, (int)wcslen(value.pwszVal), (char *)deviceInfo->name, MAX_STR_LEN - 1, 0, 0);
+ 					else
+ 						_snprintf((char *)deviceInfo->name, MAX_STR_LEN - 1, "baddev%d", i);
+                     PropVariantClear(&value);
+diff --git a/src/hostapi/wdmks/pa_win_wdmks.c b/src/hostapi/wdmks/pa_win_wdmks.c
+index 70a48d8..0287844 100644
+--- a/src/hostapi/wdmks/pa_win_wdmks.c
++++ b/src/hostapi/wdmks/pa_win_wdmks.c
+@@ -3598,7 +3598,7 @@ static PaError ScanDeviceInfos( struct PaUtilHostApiRepresentation *hostApi, PaH
+                     }
+ 
+                     /* Convert wide char string to utf-8 */
+-                    WideCharToMultiByte(CP_UTF8, 0, localCompositeName, -1, wdmDeviceInfo->compositeName, MAX_PATH, NULL, NULL);
++                    WideCharToMultiByte((GetACP() == 65001) ? CP_UTF8 : CP_ACP, 0, localCompositeName, -1, wdmDeviceInfo->compositeName, MAX_PATH, NULL, NULL);
+ 
+                     /* NB! WDM/KS has no concept of a full-duplex device, each pin is either an input or an output */
+                     if (isInput)
+                     
+diff --git a/src/hostapi/dsound/pa_win_ds.c b/src/hostapi/dsound/pa_win_ds.c
+index 35fac5f..2a01311 100644
+--- a/src/hostapi/dsound/pa_win_ds.c
++++ b/src/hostapi/dsound/pa_win_ds.c
+@@ -404,29 +404,32 @@ static double PaWinDs_GetMinLatencySeconds( double sampleRate )
+ **/
+ static char *DuplicateDeviceNameString( PaUtilAllocationGroup *allocations, const wchar_t* src )
+ {
++	UINT codepage;
+     char *result = 0;
+     
+     if( src != NULL )
+     {
+-#if !defined(_UNICODE) && !defined(UNICODE)
+-        size_t len = WideCharToMultiByte(CP_ACP, 0, src, -1, NULL, 0, NULL, NULL);
++    codepage = GetACP();
++    if (codepage == 65001) {
++        size_t len = WideCharToMultiByte(CP_UTF8, 0, src, -1, NULL, 0, NULL, NULL);
+ 
+         result = (char*)PaUtil_GroupAllocateMemory( allocations, (long)(len + 1) );
+         if( result ) {
+-            if (WideCharToMultiByte(CP_ACP, 0, src, -1, result, (int)len, NULL, NULL) == 0) {
++            if (WideCharToMultiByte(CP_UTF8, 0, src, -1, result, (int)len, NULL, NULL) == 0) {
+                 result = 0;
+             }
+         }
+-#else
+-        size_t len = WideCharToMultiByte(CP_UTF8, 0, src, -1, NULL, 0, NULL, NULL);
++    }
++    else {
++        size_t len = WideCharToMultiByte(CP_ACP, 0, src, -1, NULL, 0, NULL, NULL);
+ 
+         result = (char*)PaUtil_GroupAllocateMemory( allocations, (long)(len + 1) );
+         if( result ) {
+-            if (WideCharToMultiByte(CP_UTF8, 0, src, -1, result, (int)len, NULL, NULL) == 0) {
++            if (WideCharToMultiByte(CP_ACP, 0, src, -1, result, (int)len, NULL, NULL) == 0) {
+                 result = 0;
+             }
+         }
+-#endif
++    }
+     }
+     else
+     {
+     
