@@ -163,8 +163,8 @@ define $(PKG)_BUILD_$(BUILD)
             --includedir='$(PREFIX)/$(TARGET)/include' \
             install
 # setup cmake toolchain
-    printf "set (Boost_USE_STATIC_LIBS ON)\\n\
-    set (Boost_USE_MULTITHREADED ON)\\n\
-    set (Boost_NO_BOOST_CMAKE $(if $($(PKG)_ENABLE_CMAKE_SUPPORT),OFF,ON))\\n\
-    set (Boost_USE_STATIC_RUNTIME ON)\\n" > '$(CMAKE_TOOLCHAIN_DIR)/$(PKG).cmake'
+#     printf "set (Boost_USE_STATIC_LIBS ON)\\n\
+#     set (Boost_USE_MULTITHREADED ON)\\n\
+#     set (Boost_NO_BOOST_CMAKE $(if $($(PKG)_ENABLE_CMAKE_SUPPORT),OFF,ON))\\n\
+#     set (Boost_USE_STATIC_RUNTIME ON)\\n" > '$(CMAKE_TOOLCHAIN_DIR)/$(PKG).cmake'
 endef
