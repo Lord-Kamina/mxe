@@ -4,9 +4,9 @@ PKG             := portaudiodev
 $(PKG)_WEBSITE  := http://www.portaudio.com/
 $(PKG)_IGNORE   :=
 $(PKG)_VERSION  := dev
-$(PKG)_CHECKSUM := edc7d987620b23ea6a2fbc9140dd4186c9daf908ae91db9a2ed3390aee142842
+$(PKG)_CHECKSUM := 9c2638545daf0814529a67f95aa20c25b90be319ee037899199c80bcb8f7b2e6
 $(PKG)_SUBDIR   := portaudio
-$(PKG)_FILE     := pa_snapshot.tgz
+$(PKG)_FILE     := pa_snapshot.tar.gz
 $(PKG)_URL      := http://www.portaudio.com/archives/$($(PKG)_FILE)
 $(PKG)_DEPS     := cc
 
