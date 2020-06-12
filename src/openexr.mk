@@ -22,7 +22,7 @@ endef
 GCC_VERSION_MAJOR := $(shell echo $(gcc_VERSION) | cut -f1 -d.)
 GCC_VERSION_MINOR := $(shell echo $(gcc_VERSION) | cut -f2 -d.)
 
-$(PKG)_CXXSTD_14 := $(shell [ $(GCC_VERSION_MAJOR) -gt 6 -o \( $(GCC_VERSION_MAJOR) -eq 6 -a $(GCC_VERSION_MINOR) -ge 1 \) ] && echo true)
+$(PKG)_CXXSTD_14 = $(shell if [[ $(GCC_VERSION_MAJOR) > 6 || \( $(GCC_VERSION_MAJOR) == 6 && $(GCC_VERSION_MINOR) >= 1 \) ]]; then echo true)
 
 define $(PKG)_BUILD
     echo "patches: $(ilmbase_PATCHES)"
