@@ -22,20 +22,22 @@ define $(PKG)_BUILD
     # nsis uses it's own BUILD_PREFIX which isn't user configurable
     mkdir -p '$(BUILD_DIR).scons'
     $(call PREPARE_PKG_SOURCE,scons-local,'$(BUILD_DIR).scons')
-    $(if $(findstring x86_64-w64-mingw32,$(TARGET)),\
-        $(SED) -i 's/pei-i386/pei-x86-64/' '$(1)/SCons/Config/linker_script' && \
-        $(SED) -i 's/m_target_type=TARGET_X86ANSI/m_target_type=TARGET_AMD64/' '$(SOURCE_DIR)/Source/build.cpp')
-
-    # scons does various PATH manipulations that don't play well with ccache
-    cd '$(SOURCE_DIR)' && PATH='$(PREFIX)/bin:$(PATH)' $(PYTHON2) '$(BUILD_DIR).scons/scons.py' \
-        XGCC_W32_PREFIX='$(TARGET)-' \
+    $(SED) -i 's/m_target_type=TARGET_X86ANSI/$(if $(findstring x86_64,$(TARGET)), \
+        m_target_type=TARGET_AMD64/,m_target_type=TARGET_X86UNICODE/)' '$(SOURCE_DIR)/Source/build.cpp'
+    cd '$(SOURCE_DIR)' && \
+        CCACHE_DISABLE=1 \
+        PATH='$(PREFIX)/bin:$(PATH)' \
+        $(PYTHON3) '$(BUILD_DIR).scons/scons.py' \
+        --debug=findlibs \
         PREFIX='$(PREFIX)/$(TARGET)' \
-        `[ -d /usr/local/include ] && echo APPEND_CPPPATH=/usr/local/include` \
-        `[ -d /usr/local/lib ]     && echo APPEND_LIBPATH=/usr/local/lib` \
-        $(if $(findstring x86_64-w64-mingw32,$(TARGET)),\
-            SKIPPLUGINS='System' TARGET_ARCH=amd64) \
+        XGCC_W32_PREFIX='$(TARGET)-' \
+        CPPPATH_APPEND="['#$(PREFIX)/$(TARGET)/include'$(shell [ -d /usr/local/include ] && echo , \'#/usr/local/include\')]" \
+        LIBPATH_APPEND="['#$(PREFIX)/$(TARGET)/lib'$(shell [ -d /usr/local/lib ] && echo , \'#/usr/local/lib\')]" \
+        TARGET_ARCH=$(if $(findstring x86_64,$(TARGET)),amd64,x86) \
+        TARGET_OS='windows' \
         SKIPUTILS='MakeLangId,Makensisw,NSIS Menu,zip2exe' \
         NSIS_MAX_STRLEN=8192 \
+        LINKFLAGS="--oformat pei-$(if $(findstring x86_64,$(TARGET)),x86-64,i386)" \
         install
     $(INSTALL) -m755 '$(PREFIX)/$(TARGET)/bin/makensis' '$(PREFIX)/bin/$(TARGET)-makensis'
 endef
