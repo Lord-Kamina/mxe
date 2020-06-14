@@ -19,14 +19,9 @@ define $(PKG)_UPDATE
     head -1
 endef
 
-GCC_VERSION_MAJOR := $(shell gcc --version | grep ^gcc | sed 's/^.* //g' | cut -f1 -d.)
-GCC_VERSION_MINOR := $(shell gcc --version | grep ^gcc | sed 's/^.* //g' | cut -f2 -d.)
-
-$(PKG)_CXXSTD_14 = `[ $(GCC_VERSION_MAJOR) > 6 || \( $(GCC_VERSION_MAJOR) == 6 && $(GCC_VERSION_MINOR) >= 1 \) ] && echo true`
-
 define $(PKG)_BUILD
      cd '$(BUILD_DIR)' && $(TARGET)-cmake \
-    -DOPENEXR_CXX_STANDARD=$(if $($(PKG)_CXXSTD_14),14,11) \
+    -DOPENEXR_CXX_STANDARD=11 \
     -DOPENEXR_INSTALL_PKG_CONFIG=ON \
     -DBUILD_TESTING=OFF \
     "$(SOURCE_DIR)/OpenEXR"

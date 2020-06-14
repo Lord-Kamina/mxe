@@ -18,14 +18,9 @@ define $(PKG)_UPDATE
     head -1
 endef
 
-GCC_VERSION_MAJOR := $(shell echo $(gcc_VERSION) | cut -f1 -d.)
-GCC_VERSION_MINOR := $(shell echo $(gcc_VERSION) | cut -f2 -d.)
-
-$(PKG)_CXXSTD_14 = `[ $(GCC_VERSION_MAJOR) > 6 || \( $(GCC_VERSION_MAJOR) == 6 && $(GCC_VERSION_MINOR) >= 1 \) ] && echo true`
-
 define $(PKG)_BUILD
     cd '$(BUILD_DIR)' && $(TARGET)-cmake \
-    -DOPENEXR_CXX_STANDARD=$(if $($(PKG)_CXXSTD_14),14,11) \
+    -DOPENEXR_CXX_STANDARD=11 \
     -DBUILD_TESTING=OFF \
     -DILMBASE_INSTALL_PKG_CONFIG=ON \
     "$(SOURCE_DIR)"/IlmBase
